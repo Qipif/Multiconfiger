@@ -65,6 +65,9 @@ void MYFFT_ProcessPhase(FFT_Handle *h, const uint16_t *dual_adc_buf, FFT_Result 
 void MYFFT_SetPhaseOffset(FFT_Handle *h, float offset_deg);
 
 // 工具
+// 获取内部幅度谱缓冲（只读，fft_len/2项）
+const float* MYFFT_GetMagBuffer(FFT_Handle *h);
+
 const char* FFT_WaveStr(FFT_Wave_t w);
 const char* FFT_ModeStr(FFT_Mode_t m);
 

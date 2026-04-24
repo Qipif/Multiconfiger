@@ -1,7 +1,6 @@
 #include "mydraw.h"
 #include <stdio.h>
 #include <string.h>
-#include <stdlib.h>
 
 static DrawMode current_mode = DISP_MODE_WAVE_IN;
 
@@ -89,15 +88,40 @@ void MYDRAW_DrawFFTInfoEx(const FFT_Result *r0,
 }
 
 /**
- * @brief 绘制频谱图
+ * @brief 绘制频谱柱状图
+ * @param mag     FFT幅度谱（fft_len/2项，电压V）
+ * @param fft_len FFT点数(256或1024)
  */
-void MYDRAW_DrawSpectrum(const FFT_Result *result, uint16_t fft_len) {
-    // 频谱图暂不可用（FFT_Result无mag数组），改为文字显示
-    char buf[17];
-    sprintf(buf, "F:%5.0fHz", result->frequency);
-    OLED_ShowString(1, 1, buf);
-    sprintf(buf, "A:%4.2fV", result->amplitude);
-    OLED_ShowString(2, 1, buf);
-    sprintf(buf, "%s", FFT_WaveStr(result->wave_type));
-    OLED_ShowString(3, 1, buf);
+void MYDRAW_DrawSpectrum(const float *mag, uint16_t fft_len) {
+    if (!mag || fft_len < 128) return;
+
+    #define SPEC_TOP_Y    10
+    #define SPEC_HEIGHT   48
+    #define SPEC_BOTTOM_Y (SPEC_TOP_Y + SPEC_HEIGHT - 1)
+
+    uint16_t n_bins = fft_len / 2;
+    uint16_t bars = 64;            // 64根柱=128像素宽
+    uint16_t bins_per_bar = n_bins / bars;  // 256pt→2, 1024pt→8
+
+    OLED_NewFrame();
+
+    for (uint16_t x = 0; x < bars; x++) {
+        uint16_t bin = x * bins_per_bar;
+        if (bin >= n_bins) break;
+
+        float mag_val = mag[bin];
+        int height = (int)(mag_val * (float)SPEC_HEIGHT / 2.0f);
+        if (height > SPEC_HEIGHT) height = SPEC_HEIGHT;
+        if (height < 0) height = 0;
+
+        int col_l = x * 2;
+        int col_r = x * 2 + 1;
+        for (int y = 0; y < height; y++) {
+            int row = SPEC_BOTTOM_Y - y;
+            OLED_SetPixel(col_l, row, OLED_COLOR_NORMAL);
+            OLED_SetPixel(col_r, row, OLED_COLOR_NORMAL);
+        }
+    }
+
+    OLED_ShowFrame();
 }

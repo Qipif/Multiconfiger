@@ -23,6 +23,6 @@ void MYDRAW_DrawFFTInfoEx(const FFT_Result *r0,
                           const FFT_Result *r1,
                           float phase_diff_deg,
                           int gain);
-void MYDRAW_DrawSpectrum(const FFT_Result *result, uint16_t fft_len);
+void MYDRAW_DrawSpectrum(const float *mag, uint16_t fft_len);
 
 #endif

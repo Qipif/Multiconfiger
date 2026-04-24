@@ -458,3 +458,7 @@ void MYFFT_SetPhaseOffset(FFT_Handle *h, float offset_deg) {
     h->phase_offset = offset_deg;
 }
 
+const float* MYFFT_GetMagBuffer(FFT_Handle *h) {
+    return h ? h->fft_mag : NULL;
+}
+

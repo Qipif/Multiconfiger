@@ -332,6 +332,7 @@ const char *m = FFT_ModeStr(FFT_MODE_FAST); // 返回模式名称
 | `MYFFT_Goertzel_SetFreqBin()` | 设置Goertzel目标频率 |
 | `MYFFT_SetPhaseOffset()` | 相位偏置校准 |
 | `MYFFT_SetSampleRate()` | 修改采样率数值（不改硬件） |
+| `MYFFT_GetMagBuffer()` | 获取幅度谱数组（供频谱图使用） |
 | `MYFFT_SetWindow()` | 修改窗函数 |
 | `FFT_WaveStr()` | 波形名称字符串 |
 | `FFT_ModeStr()` | 模式名称字符串 |
@@ -418,19 +419,30 @@ MYDRAW_DrawFFTInfoEx(&r_input, &r_output, phase_diff, gain);
 行4: PH : +30.5
 ```
 
-### 3.7 显示频谱（文字版）
+### 3.7 显示频谱图
 
 ```c
-FFT_Result result;
-MYDRAW_DrawSpectrum(&result, 1024);
+// 通过 MYFFT_GetMagBuffer 获取FFT幅度谱
+const float *mag = MYFFT_GetMagBuffer(fft_handle);
+MYDRAW_DrawSpectrum(mag, 1024); // 256或1024，对应FAST/PRECISE模式
 ```
 
 **OLED显示效果：**
+
+64根频谱柱（每根2px宽=128px满屏），从底部向上生长，高度 = 幅度 / 2.0V × 48px。
+
+顶部10行留空，可叠加文字：
+```c
+MYDRAW_DrawSpectrum(mag, 1024);
+char buf[17];
+sprintf(buf, "F:%5.0fHz %4.2fV", result.frequency, result.amplitude);
+OLED_ShowString(1, 1, buf);   // 文字叠在频谱上方
 ```
-行1: F: 1000Hz
-行2: A:1.00V
-行3: SIN
-```
+
+**参数说明：**
+- `mag`：FFT幅度谱数组（长度 = fft_len/2），通过 `MYFFT_GetMagBuffer()` 获取
+- `fft_len`：FFT点数（256或1024），用于计算 bin 合并比例
+- 幅度映射：`mag / 2.0V × 48px`，超过 2.0V 的柱截断到 48px
 
 ### 3.8 API快速索引
 
@@ -443,7 +455,7 @@ MYDRAW_DrawSpectrum(&result, 1024);
 | `MYDRAW_DrawSingleWave()` | 画单通道波形 |
 | `MYDRAW_DrawLissajous()` | 画李萨如图 |
 | `MYDRAW_DrawFFTInfoEx()` | 显示FFT双通道信息 |
-| `MYDRAW_DrawSpectrum()` | 显示频谱文字 |
+| `MYDRAW_DrawSpectrum()` | 显示频谱柱状图 |
 
 ---
 
