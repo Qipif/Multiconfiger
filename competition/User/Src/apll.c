@@ -5,29 +5,38 @@
 #define DAC_MID  2048
 #define DAC_MAX  4095
 
+// 零交叉检测间隔：1MHz/100kHz=10点/周期，每5点检测一次足够
+#define ZC_CHECK_INTERVAL  5
+
 // ---- 单样本处理（灵魂） ----
 uint16_t APLL_Step(APLL_Handle *h, uint16_t adc)
 {
     // 1. 写入环形缓冲
     h->ring[h->widx] = adc;
 
-    // 2. 零交叉测频（轻量在线检测）
-    int16_t cur = (int16_t)adc - ADC_MID;
+    // 2. 零交叉测频（降频检测，减少计算量）
+    h->zc_counter++;
+    if (h->zc_counter >= ZC_CHECK_INTERVAL) {
+        h->zc_counter = 0;
 
-    if (h->last_sample < 0 && cur >= 0) {
-        uint16_t now = h->widx;
-        uint16_t diff = (now >= h->last_zc_widx) ?
-                        (now - h->last_zc_widx) :
-                        (APLL_RING_SIZE + now - h->last_zc_widx);
+        int16_t cur = (int16_t)adc - ADC_MID;
 
-        if (diff > 10 && diff < APLL_RING_SIZE / 2) {
-            h->spp = 0.9f * h->spp + 0.1f * (float)diff;
-            h->zc_found = 1;
+        if (h->last_sample < 0 && cur >= 0) {
+            uint16_t now = h->widx;
+            uint16_t diff = (now >= h->last_zc_widx) ?
+                            (now - h->last_zc_widx) :
+                            (APLL_RING_SIZE + now - h->last_zc_widx);
+
+            if (diff > 10 && diff < APLL_RING_SIZE / 2) {
+                // diff是实际采样点间隔，直接用于spp计算
+                h->spp = 0.9f * h->spp + 0.1f * (float)diff;
+                h->zc_found = 1;
+            }
+
+            h->last_zc_widx = now;
         }
-
-        h->last_zc_widx = now;
+        h->last_sample = cur;
     }
-    h->last_sample = cur;
 
     // 3. 计算目标延迟（用校准偏移）
     //    inherent_offset: 校准时记录的delay_f，对应用户0°
@@ -76,6 +85,7 @@ void APLL_Init(APLL_Handle *h, float fs)
     h->last_sample = 0;
     h->last_zc_widx = 0;
     h->zc_found = 0;
+    h->zc_counter = 0;
 
     h->delay_f = 0;
     h->delay_target = 0;

@@ -10,7 +10,7 @@
 
 #define APLL_RING_SIZE  2048   // 环形缓冲大小
 #define APLL_RING_MASK  (APLL_RING_SIZE - 1)
-#define APLL_DAC_BUF    256    // DAC输出缓冲 = ADC_BUF_LEN
+#define APLL_DAC_BUF    2048   // DAC输出缓冲 = ADC_BUF_LEN
 
 typedef struct {
     float fs;                // 采样率
@@ -30,6 +30,7 @@ typedef struct {
     int16_t last_sample;     // 上次采样值（减中点）
     uint16_t last_zc_widx;   // 上次零交叉时widx
     uint8_t  zc_found;       // 是否已找到零交叉
+    uint8_t  zc_counter;     // 零交叉检测计数器（降频用）
 
     // 环形缓冲
     uint16_t ring[APLL_RING_SIZE];

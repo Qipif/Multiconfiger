@@ -8,7 +8,7 @@
 // ADC采样→ring缓冲→延迟N点(浮点插值)→DAC输出
 // 同时钟 → 天然锁相
 
-#define ADC_BUF_LEN  256
+#define ADC_BUF_LEN  2048
 
 static APLL_Handle hapll;
 static ENC_Handle enc;
@@ -35,12 +35,13 @@ void main_init(void)
 
     OLED_Init();
 
-    // APLL初始化：200kHz采样率
-    APLL_Init(&hapll, 200000.0f);
+    // APLL初始化：1MHz采样率，100kHz输入时SPP=10
+    APLL_Init(&hapll, 1000000.0f);
 
-    // TIM3驱动ADC2, TIM4驱动DAC, 都设200kHz
-    TIM_Set_Frequency(&htim3, 200000);
-    TIM_Set_Frequency(&htim4, 200000);
+    // TIM3驱动ADC2, TIM4驱动DAC, 都设1MHz
+    // 定时器时钟=200MHz, 200MHz/1MHz=200, Period=199
+    TIM_Set_Frequency(&htim3, 1000000);
+    TIM_Set_Frequency(&htim4, 1000000);
 
     // 启动ADC2 DMA CIRCULAR
     HAL_ADC_Start_DMA(&hadc2, (uint32_t*)adc2_buf, ADC_BUF_LEN);
@@ -58,8 +59,9 @@ void main_init(void)
     enc.cur_phase = 0.0f;
     enc.cur_amp = 1.0f;
 
-    apll_running = 1;
+    // OLED先显示，再启用APLL处理（避免回调风暴阻塞I2C）
     OLED_ShowString(1, 1, "APLL");
+    apll_running = 1;
 }
 
 void main_loop(void)
@@ -112,10 +114,13 @@ void HAL_ADC_ConvHalfCpltCallback(ADC_HandleTypeDef *hadc)
 
     uint16_t half = ADC_BUF_LEN / 2;
 
+    // DCache invalidation: DMA写了前半帧，CPU要读到真实数据
+    SCB_InvalidateDCache_by_Addr((uint32_t*)adc2_buf, half * sizeof(uint16_t));
+
     // 处理前半帧 → 填DAC前半帧
     APLL_Process(&hapll, adc2_buf, 0, half);
 
-    // DCache清理
+    // DCache清理: 让DMA把DAC数据搬走
     SCB_CleanDCache_by_Addr((uint32_t*)hapll.dac_buf, APLL_DAC_BUF * sizeof(uint16_t));
 }
 
@@ -125,9 +130,12 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
 
     uint16_t half = ADC_BUF_LEN / 2;
 
+    // DCache invalidation: DMA写了后半帧，CPU要读到真实数据
+    SCB_InvalidateDCache_by_Addr((uint32_t*)(adc2_buf + half), half * sizeof(uint16_t));
+
     // 处理后半帧 → 填DAC后半帧
     APLL_Process(&hapll, adc2_buf + half, half, half);
 
-    // DCache清理
+    // DCache清理: 让DMA把DAC数据搬走
     SCB_CleanDCache_by_Addr((uint32_t*)hapll.dac_buf, APLL_DAC_BUF * sizeof(uint16_t));
 }

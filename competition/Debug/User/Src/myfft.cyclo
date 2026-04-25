@@ -17,3 +17,4 @@
 ../User/Src/myfft.c:364:13:_deinterleave	3
 ../User/Src/myfft.c:378:6:MYFFT_ProcessPhase	12
 ../User/Src/myfft.c:457:6:MYFFT_SetPhaseOffset	1
+../User/Src/myfft.c:461:14:MYFFT_GetMagBuffer	2

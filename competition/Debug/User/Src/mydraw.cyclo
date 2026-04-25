@@ -1,8 +1,8 @@
-../User/Src/mydraw.c:8:6:MYDRAW_Init	1
-../User/Src/mydraw.c:12:6:MYDRAW_SetMode	1
-../User/Src/mydraw.c:17:10:MYDRAW_GetMode	1
-../User/Src/mydraw.c:21:6:MYDRAW_NextMode	1
-../User/Src/mydraw.c:26:6:MYDRAW_DrawSingleWave	3
-../User/Src/mydraw.c:42:6:MYDRAW_DrawLissajous	8
-../User/Src/mydraw.c:63:6:MYDRAW_DrawFFTInfoEx	1
-../User/Src/mydraw.c:94:6:MYDRAW_DrawSpectrum	1
+../User/Src/mydraw.c:7:6:MYDRAW_Init	1
+../User/Src/mydraw.c:11:6:MYDRAW_SetMode	1
+../User/Src/mydraw.c:16:10:MYDRAW_GetMode	1
+../User/Src/mydraw.c:20:6:MYDRAW_NextMode	1
+../User/Src/mydraw.c:25:6:MYDRAW_DrawSingleWave	3
+../User/Src/mydraw.c:41:6:MYDRAW_DrawLissajous	8
+../User/Src/mydraw.c:62:6:MYDRAW_DrawFFTInfoEx	1
+../User/Src/mydraw.c:95:6:MYDRAW_DrawSpectrum	8
