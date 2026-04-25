@@ -4,13 +4,14 @@
 #include "main.h"
 #include <stdint.h>
 
-// APLL: 数字延迟线锁相
-// ADC采样→环形缓冲→延迟N点(浮点+插值)→DAC输出
+// APLL: 数字延迟线锁相（方波输出版）
+// ADC采输入 → ring缓冲+延迟插值 → 输出方波(正半周高/负半周低)
 // 同时钟 → 延迟=绝对时间 → 相位天然锁死
+// 外部RC/LC低通滤波器把方波变回正弦波
 
 #define APLL_RING_SIZE  2048   // 环形缓冲大小
 #define APLL_RING_MASK  (APLL_RING_SIZE - 1)
-#define APLL_DAC_BUF    2048   // DAC输出缓冲 = ADC_BUF_LEN
+#define APLL_DAC_BUF    256    // DAC输出缓冲 = ADC_BUF_LEN
 
 typedef struct {
     float fs;                // 采样率
@@ -30,7 +31,6 @@ typedef struct {
     int16_t last_sample;     // 上次采样值（减中点）
     uint16_t last_zc_widx;   // 上次零交叉时widx
     uint8_t  zc_found;       // 是否已找到零交叉
-    uint8_t  zc_counter;     // 零交叉检测计数器（降频用）
 
     // 环形缓冲
     uint16_t ring[APLL_RING_SIZE];
@@ -46,7 +46,7 @@ void APLL_Init(APLL_Handle *h, float fs);
 // 设置目标相位(度)和幅度(0~1)
 void APLL_SetPhase(APLL_Handle *h, float deg, float amp);
 
-// 单样本处理：写ring + 零交叉测频 + 延迟插值读取
+// 单样本处理：写ring + 零交叉测频 + 延迟插值 → 方波输出
 uint16_t APLL_Step(APLL_Handle *h, uint16_t adc);
 
 // 处理半帧ADC数据，填DAC对应半边

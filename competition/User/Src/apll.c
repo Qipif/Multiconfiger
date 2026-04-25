@@ -1,3 +1,17 @@
+/**
+ * apll.c — 数字延迟线锁相 (APLL) — 方波输出版
+ *
+ * ADC采输入 → 环形缓冲 + 零交叉测频 + 延迟插值 → 输出方波
+ * 同时钟 → 延迟=绝对时间 → 相位天然锁死
+ *
+ * 关键改进：输出方波而非正弦波
+ *   - 正弦波需要几十个点/周期才能看，100kHz需要几MHz DAC
+ *   - 方波只需要判断"正半周/负半周"，2个点/周期就够
+ *   - 外部RC/LC低通滤波器(~150kHz)把方波变回正弦波
+ *
+ * 200kHz采样率 → 100kHz信号每周期2点 → 方波输出完全OK
+ */
+
 #include "apll.h"
 #include <math.h>
 
@@ -5,8 +19,9 @@
 #define DAC_MID  2048
 #define DAC_MAX  4095
 
-// 零交叉检测间隔：1MHz/100kHz=10点/周期，每5点检测一次
-#define ZC_CHECK_INTERVAL  5
+// 方波输出电平
+#define SQ_HIGH  DAC_MAX   // 4095 → ~3.3V
+#define SQ_LOW   0         // 0    → ~0V
 
 // ---- 单样本处理（灵魂） ----
 uint16_t APLL_Step(APLL_Handle *h, uint16_t adc)
@@ -14,33 +29,26 @@ uint16_t APLL_Step(APLL_Handle *h, uint16_t adc)
     // 1. 写入环形缓冲
     h->ring[h->widx] = adc;
 
-    // 2. 零交叉测频（降频检测，减少计算量）
-    h->zc_counter++;
-    if (h->zc_counter >= ZC_CHECK_INTERVAL) {
-        h->zc_counter = 0;
+    // 2. 零交叉测频（每个点都检测，100kHz@200kHz每周期才2点不能跳过）
+    int16_t cur = (int16_t)adc - ADC_MID;
 
-        int16_t cur = (int16_t)adc - ADC_MID;
+    if (h->last_sample < 0 && cur >= 0) {
+        uint16_t now = h->widx;
+        uint16_t diff = (now >= h->last_zc_widx) ?
+                        (now - h->last_zc_widx) :
+                        (APLL_RING_SIZE + now - h->last_zc_widx);
 
-        if (h->last_sample < 0 && cur >= 0) {
-            uint16_t now = h->widx;
-            uint16_t diff = (now >= h->last_zc_widx) ?
-                            (now - h->last_zc_widx) :
-                            (APLL_RING_SIZE + now - h->last_zc_widx);
-
-            if (diff > 10 && diff < APLL_RING_SIZE / 2) {
-                // diff是实际采样点间隔，直接用于spp计算
-                h->spp = 0.9f * h->spp + 0.1f * (float)diff;
-                h->zc_found = 1;
-            }
-
-            h->last_zc_widx = now;
+        if (diff > 1 && diff < APLL_RING_SIZE / 2) {
+            // spp低通平滑
+            h->spp = 0.9f * h->spp + 0.1f * (float)diff;
+            h->zc_found = 1;
         }
-        h->last_sample = cur;
+
+        h->last_zc_widx = now;
     }
+    h->last_sample = cur;
 
     // 3. 计算目标延迟（用校准偏移）
-    //    inherent_offset: 校准时记录的delay_f，对应用户0°
-    //    用户设phase_deg → delay = inherent_offset + phase_deg/360*spp
     if (h->spp > 1.0f) {
         h->delay_target = h->inherent_offset
                         + h->target_phase_deg / 360.0f * h->spp;
@@ -49,7 +57,7 @@ uint16_t APLL_Step(APLL_Handle *h, uint16_t adc)
     // 4. 平滑延迟（防跳变）
     h->delay_f += h->delay_alpha * (h->delay_target - h->delay_f);
 
-    // 5. 插值读取
+    // 5. 插值读取（从ring里读延迟后的值，只取符号）
     float ridx = (float)h->widx - h->delay_f;
     if (ridx < 0) ridx += (float)APLL_RING_SIZE;
 
@@ -61,16 +69,24 @@ uint16_t APLL_Step(APLL_Handle *h, uint16_t adc)
     float v1 = (float)h->ring[i1] - ADC_MID;
     float v = v0 * (1.0f - frac) + v1 * frac;
 
-    // 幅度缩放
-    v = v * h->amp_scale + DAC_MID;
+    // 6. 方波输出：只需判断延迟后信号的符号
+    //    v > 0 → 正半周 → 高电平
+    //    v <= 0 → 负半周 → 低电平
+    //    幅度控制：通过占空比微调或直接用DAC输出不同电平
+    uint16_t dac_val;
+    if (v > 0) {
+        // 正半周：幅度控制
+        // amp_scale=1.0 → 输出DAC_MAX, amp_scale=0.5 → 输出DAC_MAX*0.5
+        dac_val = (uint16_t)(DAC_MID + (DAC_MID - 1) * h->amp_scale);
+    } else {
+        // 负半周
+        dac_val = (uint16_t)(DAC_MID - (DAC_MID - 1) * h->amp_scale);
+    }
 
-    if (v < 0) v = 0;
-    if (v > DAC_MAX) v = DAC_MAX;
-
-    // 6. 推进写入指针
+    // 7. 推进写入指针
     h->widx = (h->widx + 1) & APLL_RING_MASK;
 
-    return (uint16_t)v;
+    return dac_val;
 }
 
 // ---- API ----
@@ -81,16 +97,15 @@ void APLL_Init(APLL_Handle *h, float fs)
     h->target_phase_deg = 0;
     h->amp_scale = 1.0f;
 
-    h->spp = fs / 1000.0f;  // 默认猜1kHz
+    h->spp = fs / 100000.0f;  // 默认猜100kHz → 200kHz/100kHz=2点
     h->last_sample = 0;
     h->last_zc_widx = 0;
     h->zc_found = 0;
-    h->zc_counter = 0;
 
     h->delay_f = 0;
     h->delay_target = 0;
-    h->delay_alpha = 0.05f;  // 平滑系数，小一点更稳
-    h->inherent_offset = 0;  // 校准前为0
+    h->delay_alpha = 0.05f;
+    h->inherent_offset = 0;
 
     h->widx = 0;
 
@@ -125,6 +140,5 @@ float APLL_GetFreq(APLL_Handle *h)
 
 void APLL_Calibrate(APLL_Handle *h)
 {
-    // 当前delay_f位置就是用户认为的0°
     h->inherent_offset = h->delay_f;
 }

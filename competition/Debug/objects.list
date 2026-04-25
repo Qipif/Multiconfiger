@@ -621,6 +621,7 @@
 "./Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_rcc_ex.o"
 "./Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_tim.o"
 "./Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_tim_ex.o"
+"./User/Src/ad9833.o"
 "./User/Src/ad9959.o"
 "./User/Src/apll.o"
 "./User/Src/encoder.o"
@@ -632,3 +633,4 @@
 "./User/Src/oled.o"
 "./User/Src/pid.o"
 "./User/Src/store.o"
+"./User/Src/xform.o"

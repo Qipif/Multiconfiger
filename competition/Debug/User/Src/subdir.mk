@@ -5,6 +5,7 @@
 
 # Add inputs and outputs from these tool invocations to the build variables 
 C_SRCS += \
+../User/Src/ad9833.c \
 ../User/Src/ad9959.c \
 ../User/Src/apll.c \
 ../User/Src/encoder.c \
@@ -15,9 +16,11 @@ C_SRCS += \
 ../User/Src/myfft.c \
 ../User/Src/oled.c \
 ../User/Src/pid.c \
-../User/Src/store.c 
+../User/Src/store.c \
+../User/Src/xform.c 
 
 OBJS += \
+./User/Src/ad9833.o \
 ./User/Src/ad9959.o \
 ./User/Src/apll.o \
 ./User/Src/encoder.o \
@@ -28,9 +31,11 @@ OBJS += \
 ./User/Src/myfft.o \
 ./User/Src/oled.o \
 ./User/Src/pid.o \
-./User/Src/store.o 
+./User/Src/store.o \
+./User/Src/xform.o 
 
 C_DEPS += \
+./User/Src/ad9833.d \
 ./User/Src/ad9959.d \
 ./User/Src/apll.d \
 ./User/Src/encoder.d \
@@ -41,7 +46,8 @@ C_DEPS += \
 ./User/Src/myfft.d \
 ./User/Src/oled.d \
 ./User/Src/pid.d \
-./User/Src/store.d 
+./User/Src/store.d \
+./User/Src/xform.d 
 
 
 # Each subdirectory must supply rules for building sources it contributes
@@ -51,7 +57,7 @@ User/Src/%.o User/Src/%.su User/Src/%.cyclo: ../User/Src/%.c User/Src/subdir.mk
 clean: clean-User-2f-Src
 
 clean-User-2f-Src:
-	-$(RM) ./User/Src/ad9959.cyclo ./User/Src/ad9959.d ./User/Src/ad9959.o ./User/Src/ad9959.su ./User/Src/apll.cyclo ./User/Src/apll.d ./User/Src/apll.o ./User/Src/apll.su ./User/Src/encoder.cyclo ./User/Src/encoder.d ./User/Src/encoder.o ./User/Src/encoder.su ./User/Src/font.cyclo ./User/Src/font.d ./User/Src/font.o ./User/Src/font.su ./User/Src/mainoop.cyclo ./User/Src/mainoop.d ./User/Src/mainoop.o ./User/Src/mainoop.su ./User/Src/mydds.cyclo ./User/Src/mydds.d ./User/Src/mydds.o ./User/Src/mydds.su ./User/Src/mydraw.cyclo ./User/Src/mydraw.d ./User/Src/mydraw.o ./User/Src/mydraw.su ./User/Src/myfft.cyclo ./User/Src/myfft.d ./User/Src/myfft.o ./User/Src/myfft.su ./User/Src/oled.cyclo ./User/Src/oled.d ./User/Src/oled.o ./User/Src/oled.su ./User/Src/pid.cyclo ./User/Src/pid.d ./User/Src/pid.o ./User/Src/pid.su ./User/Src/store.cyclo ./User/Src/store.d ./User/Src/store.o ./User/Src/store.su
+	-$(RM) ./User/Src/ad9833.cyclo ./User/Src/ad9833.d ./User/Src/ad9833.o ./User/Src/ad9833.su ./User/Src/ad9959.cyclo ./User/Src/ad9959.d ./User/Src/ad9959.o ./User/Src/ad9959.su ./User/Src/apll.cyclo ./User/Src/apll.d ./User/Src/apll.o ./User/Src/apll.su ./User/Src/encoder.cyclo ./User/Src/encoder.d ./User/Src/encoder.o ./User/Src/encoder.su ./User/Src/font.cyclo ./User/Src/font.d ./User/Src/font.o ./User/Src/font.su ./User/Src/mainoop.cyclo ./User/Src/mainoop.d ./User/Src/mainoop.o ./User/Src/mainoop.su ./User/Src/mydds.cyclo ./User/Src/mydds.d ./User/Src/mydds.o ./User/Src/mydds.su ./User/Src/mydraw.cyclo ./User/Src/mydraw.d ./User/Src/mydraw.o ./User/Src/mydraw.su ./User/Src/myfft.cyclo ./User/Src/myfft.d ./User/Src/myfft.o ./User/Src/myfft.su ./User/Src/oled.cyclo ./User/Src/oled.d ./User/Src/oled.o ./User/Src/oled.su ./User/Src/pid.cyclo ./User/Src/pid.d ./User/Src/pid.o ./User/Src/pid.su ./User/Src/store.cyclo ./User/Src/store.d ./User/Src/store.o ./User/Src/store.su ./User/Src/xform.cyclo ./User/Src/xform.d ./User/Src/xform.o ./User/Src/xform.su
 
 .PHONY: clean-User-2f-Src
 

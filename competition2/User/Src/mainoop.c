@@ -1,7 +1,6 @@
 /**
  * competition2 - 主文件
- * 数字锁相环(DPLL)：FFT测相 + PID控制
- * DMA ISR只负责置标志，主循环做FFT/PID/DDS更新
+ * FLL+PLL双环锁相 v10
  */
 
 #include "main.h"
@@ -26,16 +25,21 @@ static void oled_refresh(void)
     char buf[32];
 
     if (s_oledPage == 0) {
-        snprintf(buf, sizeof(buf), "F:%.0f Hz", g_ddsFreq);
+        // 主页面：频率 + 相位 + 锁定状态
+        snprintf(buf, sizeof(buf), "F:%.0f M:%.0f", g_ddsFreq, g_freqMeas);
         OLED_ShowString(1, 1, buf);
 
         snprintf(buf, sizeof(buf), "P:%.1f deg", g_phaseView);
         OLED_ShowString(2, 1, buf);
 
-        snprintf(buf, sizeof(buf), "L:%lu CB:%lu",
-                 g_pllLoopCnt, g_cbCnt);
+        if (g_isLocked) {
+            snprintf(buf, sizeof(buf), "LOCK  C:%lu", g_pllLoopCnt);
+        } else {
+            snprintf(buf, sizeof(buf), "TRCK  C:%lu", g_pllLoopCnt);
+        }
         OLED_ShowString(3, 1, buf);
     } else {
+        // 调试页面：ADC范围 + 回调计数
         snprintf(buf, sizeof(buf), "Vin:%d~%d",
                  (int)g_debugVinMin, (int)g_debugVinMax);
         OLED_ShowString(1, 1, buf);
@@ -44,12 +48,8 @@ static void oled_refresh(void)
                  (int)g_debugVoutMin, (int)g_debugVoutMax);
         OLED_ShowString(2, 1, buf);
 
-        if (fabsf(g_debugVinMax - g_debugVoutMax) < 100 &&
-            fabsf(g_debugVinMin - g_debugVoutMin) < 100) {
-            OLED_ShowString(3, 1, "WARN:SAME!");
-        } else {
-            OLED_ShowString(3, 1, "DIFF OK   ");
-        }
+        snprintf(buf, sizeof(buf), "CB:%lu", g_cbCnt);
+        OLED_ShowString(3, 1, buf);
     }
 }
 
