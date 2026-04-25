@@ -4,16 +4,28 @@
 #include "main.h"
 #include <stdint.h>
 
-// 硬件边沿同步器 + 数字移相 v2
-// 核心：EXTI双边沿中断 → TIM2输出比较 → GPIO翻转
+// 硬件边沿同步器 + 数字移相 v3
+// 核心：EXTI双边沿中断 → TIM2输出比较 → DAC输出方波
 //
 // v1: dwt_delay忙等 → 阻塞中断 + 接近半周期双稳态失稳 → ❌
-// v2: TIM2硬件比较 → ISR立即返回 + 硬件精确定时 + 全相位范围稳定 → ✅
+// v2: TIM2硬件比较 → GPIO翻转 → ISR不阻塞 → ✅
+//     但EXTI vs TIM2竞争输出 → 接近0°/180°时波形撕裂 → ❌
+// v3: TIM2硬件比较 → DAC输出 → 幅值可调 + 防竞争 → ✅✅
+//
+// 防竞争核心：
+//   1. delay <= MIN_DELAY → 直接输出，不走TIM2（避开撞车区）
+//   2. EXTI ISR里先禁CC1再操作（原子化，防TIM2 ISR抢跑）
+//   3. 清NVIC pending（防残留TIM2 ISR在EXTI ISR后触发）
 //
 // 相位0°：输出紧跟输入，零延迟
 // 相位0-180°：TIM2比较延时 phase/360*周期 后跟随
 // 相位180-355°：反转输出 + TIM2比较延时 (phase-180)/360*周期
+// 幅值0~3.3V：DAC12bit，高电平=amp对应的DAC值，低电平=0
 // 测频100ms采样 + 低通0.95/0.05
+
+// 最小延时阈值：低于此值直接输出，不走TIM2
+// 20 cycles @ 400MHz ≈ 50ns，远小于5°相位对应的56 cycles
+#define EDGE_MIN_DELAY  20
 
 typedef struct {
     // 测频（DWT + cnt）
@@ -27,10 +39,16 @@ typedef struct {
 
     // TIM2输出比较
     uint8_t  pending_high;     // 待输出电平（CC中断时用）
+    uint8_t  has_pending;      // 1=有CC等待触发
     uint32_t tim2_clock;       // TIM2时钟频率（Hz）
+
+    // 幅值控制
+    float    amplitude;        // 输出幅值 0.0~3.3V
+    uint16_t dac_high;         // 高电平DAC值（12bit: 0~4095）
+    uint16_t dac_low;          // 低电平DAC值（固定0）
 } EdgeSync_Handle;
 
-// 初始化：PA6 EXTI双边沿 + PA4 GPIO推挽 + TIM2硬件比较
+// 初始化：PA6 EXTI双边沿 + PA4 DAC输出 + TIM2硬件比较
 // ⚠️ 必须在MX_ADC2_Init/MX_DAC1_Init之后调用
 void EdgeSync_Init(void);
 
@@ -48,5 +66,11 @@ void EdgeSync_UpdateFreq(void);
 
 // 设置目标相位（度）
 void EdgeSync_SetPhase(float deg);
+
+// 设置输出幅值（0.0~3.3V）
+void EdgeSync_SetAmp(float volt);
+
+// 获取当前幅值
+float EdgeSync_GetAmp(void);
 
 #endif
