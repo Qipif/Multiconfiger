@@ -1,21 +1,23 @@
 /**
- * apll.c — 数字延迟线锁相 (APLL) — 方波输出版
+ * apll.c — APLL v11 真正锁死版
  *
- * ADC采输入 → 环形缓冲 + 零交叉测频 + 延迟插值 → 输出方波
- * 同时钟 → 延迟=绝对时间 → 相位天然锁死
+ * v10的问题：ZC只测频不修相位 → 本质是FLL → 相位必漂
+ * v11核心改进：
+ *   1. 亚采样零交叉插值 → spp精度从1点→0.01点
+ *   2. NCO相位累加器输出 → 不依赖瞬时符号
+ *   3. 锁定冻结机制 → 锁住后频率不再追噪声
+ *   4. ★ ZC时相位纠偏 → 每次过零把phase掰回来 → 真锁相
  *
- * 关键改进：输出方波而非正弦波
- *   - 正弦波需要几十个点/周期才能看，100kHz需要几MHz DAC
- *   - 方波只需要判断"正半周/负半周"，2个点/周期就够
- *   - 外部RC/LC低通滤波器(~150kHz)把方波变回正弦波
- *
- * 200kHz采样率 → 100kHz信号每周期2点 → 方波输出完全OK
+ * 数据流：
+ *   ADC采输入 → 写ring → 亚采样ZC测频+测相位误差
+ *   → spp低通 → freq_filt频率滤波 → 锁定冻结
+ *   → NCO phase累加 → ZC纠偏 → 相位偏移 → 方波输出
  */
 
 #include "apll.h"
 #include <math.h>
 
-#define ADC_MID  2048
+#define ADC_MID  2048.0f
 #define DAC_MID  2048
 #define DAC_MAX  4095
 
@@ -23,67 +25,96 @@
 #define SQ_HIGH  DAC_MAX   // 4095 → ~3.3V
 #define SQ_LOW   0         // 0    → ~0V
 
-// ---- 单样本处理（灵魂） ----
+// 施密特触发电平（ADC原始值减中点后的阈值）
+#define SQ_HYS   50.0f
+
+// ---- 单样本处理 ----
 uint16_t APLL_Step(APLL_Handle *h, uint16_t adc)
 {
-    // 1. 写入环形缓冲
+    // ===== 1. 写入环形缓冲 =====
     h->ring[h->widx] = adc;
+    float cur = (float)adc - ADC_MID;
 
-    // 2. 零交叉测频（每个点都检测，100kHz@200kHz每周期才2点不能跳过）
-    int16_t cur = (int16_t)adc - ADC_MID;
-
+    // ===== 2. 亚采样零交叉检测 + 相位纠偏 =====
+    //    线性插值求过零点的精确位置，精度远高于整点
+    //    ★ v11：ZC时同时修相位，实现真正锁相
     if (h->last_sample < 0 && cur >= 0) {
-        uint16_t now = h->widx;
-        uint16_t diff = (now >= h->last_zc_widx) ?
-                        (now - h->last_zc_widx) :
-                        (APLL_RING_SIZE + now - h->last_zc_widx);
+        // 插值：frac = |last| / (|last| + cur)
+        float frac = (-h->last_sample) / (cur - h->last_sample);
+        // zc_pos = 上一个点 + frac
+        float zc_pos = (float)h->widx - 1.0f + frac;
 
-        if (diff > 1 && diff < APLL_RING_SIZE / 2) {
-            // spp低通平滑
-            h->spp = 0.9f * h->spp + 0.1f * (float)diff;
-            h->zc_found = 1;
+        float diff = zc_pos - h->last_zc_pos;
+        if (diff < 0) diff += (float)APLL_RING_SIZE;
+
+        if (diff > 1.0f && diff < (float)(APLL_RING_SIZE / 2)) {
+            // spp强低通（0.95/0.05），稳住频率
+            h->spp = 0.95f * h->spp + 0.05f * diff;
+
+            // 锁定判定：连续多次周期稳定 → 锁定
+            float err = fabsf(diff - h->spp);
+            if (err < 0.02f)
+                h->lock_cnt++;
+            else
+                h->lock_cnt = 0;
+
+            if (h->lock_cnt > 20)
+                h->locked = 1;
         }
 
-        h->last_zc_widx = now;
+        // ===== ★ 相位纠偏（v11核心） =====
+        // ZC时phase应该=0，如果偏了就掰回来
+        // 这是真正锁相的关键：有相位误差反馈
+        float phase_err = h->phase;
+        if (phase_err > 0.5f) phase_err -= 1.0f;
+
+        // 限幅防炸（最多修0.1个周期 = 36°）
+        if (phase_err > 0.1f)  phase_err = 0.1f;
+        if (phase_err < -0.1f) phase_err = -0.1f;
+
+        // 轻微纠偏：只修20%，不震荡
+        h->phase -= 0.2f * phase_err;
+
+        // wrap
+        if (h->phase < 0.0f)    h->phase += 1.0f;
+        if (h->phase >= 1.0f)   h->phase -= 1.0f;
+
+        h->last_zc_pos = zc_pos;
+        h->zc_found = 1;
     }
     h->last_sample = cur;
 
-    // 3. 计算目标延迟（用校准偏移）
-    if (h->spp > 1.0f) {
-        h->delay_target = h->inherent_offset
-                        + h->target_phase_deg / 360.0f * h->spp;
-    }
+    // ===== 3. 计算频率 =====
+    float freq = (h->spp > 1.0f) ? (h->fs / h->spp) : 100000.0f;
 
-    // 4. 平滑延迟（防跳变）
-    h->delay_f += h->delay_alpha * (h->delay_target - h->delay_f);
+    // 锁定后冻结频率（核心抗抖）
+    if (!h->locked)
+        h->freq_filt = 0.9f * h->freq_filt + 0.1f * freq;
 
-    // 5. 插值读取（从ring里读延迟后的值，只取符号）
-    float ridx = (float)h->widx - h->delay_f;
-    if (ridx < 0) ridx += (float)APLL_RING_SIZE;
+    float f_use = h->freq_filt;
 
-    int i0 = (int)ridx & APLL_RING_MASK;
-    int i1 = (i0 + 1) & APLL_RING_MASK;
-    float frac = ridx - (float)(int)ridx;
+    // ===== 4. NCO相位累加 =====
+    //    phase_step = 频率/采样率，每步累加
+    float phase_step = f_use / h->fs;
+    h->phase += phase_step;
+    if (h->phase >= 1.0f)
+        h->phase -= 1.0f;
 
-    float v0 = (float)h->ring[i0] - ADC_MID;
-    float v1 = (float)h->ring[i1] - ADC_MID;
-    float v = v0 * (1.0f - frac) + v1 * frac;
+    // ===== 5. 相位偏移（用户调的移相） =====
+    float phase_out = h->phase + h->target_phase_deg / 360.0f;
+    if (phase_out >= 1.0f)
+        phase_out -= 1.0f;
 
-    // 6. 方波输出：只需判断延迟后信号的符号
-    //    v > 0 → 正半周 → 高电平
-    //    v <= 0 → 负半周 → 低电平
-    //    幅度控制：通过占空比微调或直接用DAC输出不同电平
+    // ===== 6. 方波输出 =====
+    //    phase_out < 0.5 → 正半周(高)，否则负半周(低)
     uint16_t dac_val;
-    if (v > 0) {
-        // 正半周：幅度控制
-        // amp_scale=1.0 → 输出DAC_MAX, amp_scale=0.5 → 输出DAC_MAX*0.5
+    if (phase_out < 0.5f) {
         dac_val = (uint16_t)(DAC_MID + (DAC_MID - 1) * h->amp_scale);
     } else {
-        // 负半周
         dac_val = (uint16_t)(DAC_MID - (DAC_MID - 1) * h->amp_scale);
     }
 
-    // 7. 推进写入指针
+    // ===== 7. 推进写入指针 =====
     h->widx = (h->widx + 1) & APLL_RING_MASK;
 
     return dac_val;
@@ -97,20 +128,25 @@ void APLL_Init(APLL_Handle *h, float fs)
     h->target_phase_deg = 0;
     h->amp_scale = 1.0f;
 
-    h->spp = fs / 100000.0f;  // 默认猜100kHz → 200kHz/100kHz=2点
+    h->spp = fs / 100000.0f;  // 默认猜100kHz
     h->last_sample = 0;
-    h->last_zc_widx = 0;
+    h->last_zc_pos = 0;
     h->zc_found = 0;
 
-    h->delay_f = 0;
-    h->delay_target = 0;
-    h->delay_alpha = 0.05f;
+    h->freq_filt = 100000.0f;  // 初始猜100kHz
+    h->phase = 0;
+
+    h->locked = 0;
+    h->lock_cnt = 0;
+
+    h->last_out = -1;
     h->inherent_offset = 0;
+    h->delay_f = 0;
 
     h->widx = 0;
 
     for (int i = 0; i < APLL_RING_SIZE; i++)
-        h->ring[i] = ADC_MID;
+        h->ring[i] = (uint16_t)ADC_MID;
 
     for (int i = 0; i < APLL_DAC_BUF; i++)
         h->dac_buf[i] = DAC_MID;
@@ -133,12 +169,13 @@ void APLL_Process(APLL_Handle *h, uint16_t *adc_data,
 
 float APLL_GetFreq(APLL_Handle *h)
 {
-    if (h->spp > 1.0f)
-        return h->fs / h->spp;
-    return 0.0f;
+    return h->freq_filt;
 }
 
 void APLL_Calibrate(APLL_Handle *h)
 {
-    h->inherent_offset = h->delay_f;
+    // 校准时重置NCO相位到0，记录当前phase为参考
+    h->inherent_offset = h->phase;
+    h->phase = 0;
+    h->target_phase_deg = 0;
 }

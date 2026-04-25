@@ -1,209 +1,156 @@
-﻿/*
- * @description: C题主程序 —— APLL延迟线锁相方案
- * @approach:   ADC采输入 → 环形缓冲+延迟插值 → DAC输出同频锁相信号
- * @key:        ADC和DAC同时钟(TIM2) → 延迟=绝对时间 → 相位天然锁死
+﻿/**
+ * competition - C题 APLL方波锁相方案
+ *
+ * 核心思路：
+ *   ADC2(PA6)采100kHz正弦输入 → APLL延迟线 → DAC1(PA4)输出同频方波
+ *   外部RC/LC低通(~150kHz)把方波变回正弦波 → 实现100kHz锁相
  *
  * 硬件连接：
- *   ADC2(PA6) ← 输入100kHz正弦信号
- *   DAC1_CH1(PA4) → 输出同频锁相信号 → 外加RC低通(~150kHz)重建
- *   DAC1_CH2(PA5) → 备用/监视
+ *   PA6  ← 输入100kHz正弦信号 (ADC2_CH3)
+ *   PA4  → 输出100kHz方波 → 外接低通滤波 → 正弦波 (DAC1_CH1)
+ *   PE9/PE11 ← 编码器 (TIM1)
+ *   PA0  ← 按键（短按校准，长按切相位/幅度）
  *
- * 采样率：1MHz (TIM2 ARR=63, 64MHz/64=1MHz)
- * 100kHz信号 → 每周期10个点 → APLL延迟线够用
- * DAC输出阶梯波 → 外部RC低通 → 平滑正弦波
+ * 数据流：
+ *   TIM3(200kHz) → ADC2采样 → DMA CIRCULAR → HalfCplt/FullCplt回调
+ *   → APLL_Process(环形缓冲+延迟+方波输出) → dac_buf
+ *   → DMA CIRCULAR → TIM4(200kHz) → DAC1输出
  */
 
 #include "main.h"
 #include "oled.h"
-#include "encoder.h"
 #include "apll.h"
+#include "encoder.h"
 #include <stdio.h>
-#include <math.h>
 
-// ── APLL对象 ──────────────────────────────────────────────────
-static APLL_Handle s_apll;
+// ── APLL + 编码器 ──────────────────────────────────────────
+static APLL_Handle hapll;
+static ENC_Handle enc;
 
-// ── DMA缓冲区 ─────────────────────────────────────────────────
-// ADC2输入缓冲（PA6，TIM3触发，DMA CIRCULAR）
-// 但APLL要求ADC和DAC同时钟！所以改为：ADC1单通道(PA6) + TIM2触发
-// 暂时先用现有配置，后续用CubeMX改
+// ── ADC缓冲区 ──────────────────────────────────────────────
+#define ADC_BUF_LEN  APLL_DAC_BUF  // 256，和DAC缓冲区一样大
+static uint16_t adc2_buf[ADC_BUF_LEN];
 
-// 暂用ADC1的DMA缓冲（单通道模式，只取PA6的数据）
-// 缓冲区大小 = DAC缓冲区大小 / 2（Half/Full各一半）
-#define ADC_BUF_LEN  APLL_DAC_BUF
+// ── 状态 ───────────────────────────────────────────────────
+static volatile float measured_freq = 0.0f;
+static volatile uint8_t apll_running = 0;
 
-// 外部变量（HAL生成的）
-extern ADC_HandleTypeDef hadc1;
-extern ADC_HandleTypeDef hadc2;
-extern DAC_HandleTypeDef hdac1;
-extern TIM_HandleTypeDef htim2;
-extern TIM_HandleTypeDef htim3;
-extern TIM_HandleTypeDef htim4;
-
-// ADC输入缓冲（只取一路）
-static uint16_t s_adcBuf[ADC_BUF_LEN];
-
-// ── 系统状态 ──────────────────────────────────────────────────
-static float    s_phase = 0.0f;    // 当前移相角度（度）
-static float    s_amp   = 1.0f;    // 幅度缩放
-static uint32_t s_cbCnt = 0;       // DMA回调计数
-
-// ── OLED刷新 ──────────────────────────────────────────────────
-static uint32_t s_oled_t = 0;
-static uint8_t  s_oledPage = 0;  // 0=主页面，1=调试
-
-static void oled_refresh(void)
+// ── 设置定时器频率（参考12_multiconfiger12）──────────────────
+static void TIM_Set_Frequency(TIM_HandleTypeDef *htim, uint32_t freq_hz)
 {
-    if (HAL_GetTick() - s_oled_t < 200) return;
-    s_oled_t = HAL_GetTick();
-
-    char buf[17];
-
-    if (s_oledPage == 0) {
-        // 主页面：频率 + 相位 + 锁定
-        float freq = APLL_GetFreq(&s_apll);
-        sprintf(buf, "F:%.0fHz", freq);
-        OLED_ShowString(1, 1, buf);
-
-        sprintf(buf, "PH:%.1f AM:%.1f", s_phase, s_amp);
-        OLED_ShowString(2, 1, buf);
-
-        sprintf(buf, "CB:%lu", s_cbCnt);
-        OLED_ShowString(3, 1, buf);
-    } else {
-        // 调试页面：spp + delay + ring状态
-        sprintf(buf, "spp:%.1f", s_apll.spp);
-        OLED_ShowString(1, 1, buf);
-
-        sprintf(buf, "dly:%.1f", s_apll.delay_f);
-        OLED_ShowString(2, 1, buf);
-
-        sprintf(buf, "CB:%lu zc:%d", s_cbCnt, s_apll.zc_found);
-        OLED_ShowString(3, 1, buf);
-    }
+    uint32_t timer_clk = HAL_RCC_GetPCLK1Freq() * 2;
+    HAL_TIM_Base_Stop(htim);
+    __HAL_TIM_SET_AUTORELOAD(htim, timer_clk / freq_hz - 1);
+    __HAL_TIM_SET_COUNTER(htim, 0);
+    HAL_TIM_Base_Start(htim);
 }
 
-// ── DMA回调：ADC半帧/全帧完成 ─────────────────────────────────
-// 处理ADC数据 → APLL延迟插值 → 填DAC缓冲
+// ── ADC2 DMA回调 ───────────────────────────────────────────
 
-void HAL_ADC_ConvHalfCpltCallback(ADC_HandleTypeDef* hadc)
+void HAL_ADC_ConvHalfCpltCallback(ADC_HandleTypeDef *hadc)
 {
-    if (hadc->Instance != ADC1) return;
+    if (hadc->Instance != ADC2 || !apll_running) return;
 
-    // 处理前半帧
-    SCB_InvalidateDCache_by_Addr(
-        (uint32_t*)((uint32_t)s_adcBuf & ~(uint32_t)0x1F),
-        ((ADC_BUF_LEN / 2 * sizeof(uint16_t)) + 31) & ~(uint32_t)0x1F);
+    uint16_t half = ADC_BUF_LEN / 2;
 
-    APLL_Process(&s_apll, s_adcBuf, 0, ADC_BUF_LEN / 2);
-    s_cbCnt++;
+    // 处理前半帧 → 填DAC前半帧
+    APLL_Process(&hapll, adc2_buf, 0, half);
+
+    // DCache清理（让DMA能读到最新DAC数据）
+    SCB_CleanDCache_by_Addr((uint32_t*)hapll.dac_buf, APLL_DAC_BUF * sizeof(uint16_t));
 }
 
-void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
+void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
 {
-    if (hadc->Instance != ADC1) return;
+    if (hadc->Instance != ADC2 || !apll_running) return;
 
-    // 处理后半帧
-    SCB_InvalidateDCache_by_Addr(
-        (uint32_t*)(((uint32_t)s_adcBuf + ADC_BUF_LEN/2 * sizeof(uint16_t)) & ~(uint32_t)0x1F),
-        ((ADC_BUF_LEN / 2 * sizeof(uint16_t)) + 31) & ~(uint32_t)0x1F);
+    uint16_t half = ADC_BUF_LEN / 2;
 
-    APLL_Process(&s_apll, s_adcBuf + ADC_BUF_LEN / 2, ADC_BUF_LEN / 2, ADC_BUF_LEN / 2);
+    // 处理后半帧 → 填DAC后半帧
+    APLL_Process(&hapll, adc2_buf + half, half, half);
+
+    // DCache清理
+    SCB_CleanDCache_by_Addr((uint32_t*)hapll.dac_buf, APLL_DAC_BUF * sizeof(uint16_t));
 }
 
-// ── 编码器 ────────────────────────────────────────────────────
-static ENC_Handle s_enc;
-
-// ── 按键回调（PA0，校准用）────────────────────────────────────
-void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
-{
-    if (GPIO_Pin == KEY_Pin) {
-        // 按下PA0 → 校准：当前延迟位置设为0°参考
-        APLL_Calibrate(&s_apll);
-    }
-}
-
-// ── 初始化 ──────────────────────────────────────────────────────
+// ── 初始化 ──────────────────────────────────────────────────
 void main_init(void)
 {
     CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
-    DWT->CYCCNT  = 0;
-    DWT->CTRL   |= DWT_CTRL_CYCCNTENA_Msk;
+    DWT->CYCCNT = 0;
+    DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
 
     OLED_Init();
-    OLED_ShowString(1, 1, "APLL 100kHz");
-    OLED_ShowString(2, 1, "Initializing...");
 
-    // ── 1. APLL初始化 ──
-    // 采样率1MHz：TIM2 ARR=63, 64MHz/(63+1)=1MHz
-    // ⚠️ 但CubeMX里ARR=199(320kHz)，这里软件改ARR
-    APLL_Init(&s_apll, 1000000.0f);  // fs=1MHz
+    // APLL初始化：200kHz采样率（100kHz信号每周期2点，方波够用）
+    APLL_Init(&hapll, 200000.0f);
 
-    // ── 2. 修改TIM2为1MHz ──
-    HAL_TIM_Base_Stop(&htim2);
-    __HAL_TIM_SET_AUTORELOAD(&htim2, 63);   // 64MHz / 64 = 1MHz
-    __HAL_TIM_SET_COUNTER(&htim2, 0);
+    // TIM3驱动ADC2, TIM4驱动DAC, 都设200kHz
+    // 同时钟 → 延迟=绝对时间 → 相位锁死
+    TIM_Set_Frequency(&htim3, 200000);
+    TIM_Set_Frequency(&htim4, 200000);
 
-    // ── 3. 修改TIM4(DAC触发)也改为1MHz ──
-    //    APLL核心：ADC和DAC必须同时钟！
-    HAL_TIM_Base_Stop(&htim4);
-    __HAL_TIM_SET_AUTORELOAD(&htim4, 63);   // 64MHz / 64 = 1MHz
-    __HAL_TIM_SET_COUNTER(&htim4, 0);
+    // 启动ADC2 DMA CIRCULAR（PA6输入信号）
+    HAL_ADC_Start_DMA(&hadc2, (uint32_t*)adc2_buf, ADC_BUF_LEN);
 
-    // ── 4. 启动DAC DMA ──
-    //    DAC1_CH1(PA4)输出APLL处理后的信号
+    // 启动DAC1 CH1 DMA CIRCULAR（PA4输出方波）
     HAL_DAC_Start_DMA(&hdac1, DAC_CHANNEL_1,
-                       (uint32_t*)s_apll.dac_buf, APLL_DAC_BUF,
-                       DAC_ALIGN_12B_R);
+                      (uint32_t*)hapll.dac_buf, APLL_DAC_BUF,
+                      DAC_ALIGN_12B_R);
 
-    // ── 5. 启动ADC DMA ──
-    //    用ADC1单通道采PA6输入信号
-    //    ⚠️ 当前ADC1是ScanMode(2通道)，CubeMX需要改成单通道
-    //    暂时先启ADC1的DMA，只用一半数据
-    HAL_ADC_Start_DMA(&hadc1, (uint32_t*)s_adcBuf, ADC_BUF_LEN);
+    // 编码器：调相位/幅度
+    ENC_Init(&enc, &htim1, KEY_GPIO_Port, KEY_Pin);
+    enc.target = ENC_CTRL_PHASE;
+    enc.phase_range = (ENC_ParamRange){10.0f, 10.0f, 30.0f, 0.0f, 350.0f};
+    enc.amp_range   = (ENC_ParamRange){0.1f, 0.1f, 0.2f, 0.0f, 2.0f};
+    enc.cur_phase = 0.0f;
+    enc.cur_amp = 1.0f;
 
-    // ── 6. 启动定时器 ──
-    HAL_TIM_Base_Start(&htim2);  // ADC触发
-    HAL_TIM_Base_Start(&htim4);  // DAC触发
-
-    // ── 7. 编码器 ──
-    ENC_Init(&s_enc, &htim1, KEY_GPIO_Port, KEY_Pin);
-    s_enc.target = ENC_CTRL_PHASE;
-    s_enc.phase_range = (ENC_ParamRange){10.0f, 5.0f, 90.0f, 0.0f, 360.0f};
-    s_enc.cur_phase = 0.0f;
-    s_enc.cur_amp = 1.0f;
-
-    OLED_ShowString(2, 1, "APLL Running  ");
+    apll_running = 1;
+    OLED_ShowString(1, 1, "APLL SQ 100k");
 }
 
-// ── 主循环 ────────────────────────────────────────────────────────
+// ── 主循环 ──────────────────────────────────────────────────
 void main_loop(void)
 {
     // 编码器更新
-    ENC_Event_t evt = ENC_Update(&s_enc);
-
-    // 旋转：更新相位/幅度
-    if (s_enc.rotated) {
-        s_enc.rotated = 0;
-        s_phase = s_enc.cur_phase;
-        s_amp = s_enc.cur_amp;
-        APLL_SetPhase(&s_apll, s_phase, s_amp);
+    ENC_Event_t evt = ENC_Update(&enc);
+    if (enc.rotated) {
+        enc.rotated = 0;
+        APLL_SetPhase(&hapll, enc.cur_phase, enc.cur_amp);
     }
 
-    // 短按：切换编码器控制目标（相位/幅度）
+    // 短按校准：当前延迟位置=0°
     if (evt == ENC_EVT_CLICK) {
-        if (s_enc.target == ENC_CTRL_PHASE) {
-            s_enc.target = ENC_CTRL_AMP;
-        } else {
-            s_enc.target = ENC_CTRL_PHASE;
-        }
+        APLL_Calibrate(&hapll);
     }
 
-    // 长按：校准
+    // 长按切换：相位↔幅度
     if (evt == ENC_EVT_LONG_PRESS) {
-        APLL_Calibrate(&s_apll);
+        if (enc.target == ENC_CTRL_PHASE)
+            enc.target = ENC_CTRL_AMP;
+        else
+            enc.target = ENC_CTRL_PHASE;
     }
 
-    // OLED刷新
-    oled_refresh();
+    // OLED 200ms刷新
+    static uint32_t t = 0;
+    if (HAL_GetTick() - t < 200) return;
+    t = HAL_GetTick();
+
+    measured_freq = APLL_GetFreq(&hapll);
+
+    char buf[17];
+    sprintf(buf, "%s %.0fHz",
+            hapll.zc_found ? "LK" : "..",
+            measured_freq);
+    OLED_ShowString(1, 1, buf);
+
+    // 第2行：相位+幅度
+    if (enc.target == ENC_CTRL_PHASE) {
+        sprintf(buf, "PH%.0f AM%.1f", hapll.target_phase_deg, enc.cur_amp);
+    } else {
+        sprintf(buf, "PH%.0f AM%.1f*", hapll.target_phase_deg, enc.cur_amp);
+    }
+    OLED_ShowString(2, 1, buf);
 }
