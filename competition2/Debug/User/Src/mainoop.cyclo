@@ -1,3 +1,4 @@
-../User/Src/mainoop.c:19:13:oled_refresh	3
-../User/Src/mainoop.c:45:6:main_init	1
-../User/Src/mainoop.c:62:6:main_loop	1
+../User/Src/mainoop.c:21:13:oled_refresh	6
+../User/Src/mainoop.c:58:6:check_button	1
+../User/Src/mainoop.c:64:6:main_init	1
+../User/Src/mainoop.c:80:6:main_loop	1

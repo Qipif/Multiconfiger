@@ -101,12 +101,12 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_DMA_Init();
-  /* MX_ADC1_Init();  // 只用ADC2，注释掉 */
+  MX_ADC1_Init();    // ADC1: PB1采样AD9833输出反馈（DPLL必须！）
   /* MX_DAC1_Init();  // 用AD9833输出，不用DAC，注释掉 */
   MX_I2C1_Init();    // OLED
   /* MX_TIM2_Init();  // 不用，注释掉 */
   /* MX_TIM4_Init();  // 不用，注释掉 */
-  MX_ADC2_Init();    // 测频
+  MX_ADC2_Init();    // ADC2: PA6采样输入信号
   /* MX_TIM1_Init();  // 编码器不用，注释掉 */
   MX_TIM3_Init();    // 触发ADC2
   MX_SPI2_Init();    // AD9833

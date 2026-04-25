@@ -1,227 +1,200 @@
 /**
- * sample.c - 时域锁相环
- * 参考 01_signal_separator 方案：
- *   - 双ADC同步采样（TIM3触发，DMA_NORMAL）
- *   - 时域过零检测测频 + 测相
- *   - PID调频，驱动AD9833输出同频信号
+ * sample.c — 数字锁相环(DPLL)
+ * 方法：同步采样 + FFT测相 + PID频率控制
+ * 架构：DMA ISR只置标志 + 清Cache，主循环做FFT/PID/DDS更新
+ *
+ * 硬件连接：
+ *   ADC2 (PA6) = 外部输入信号 100kHz
+ *   ADC1 (PB1) = AD9833输出反馈
+ *   两路ADC由TIM3同步触发，通过DMA循环写入缓冲区
  */
 
 #include "sample.h"
 #include "ad9833.h"
-#include "oled.h"
-#include <stdio.h>
+#include "main.h"
+#include <string.h>
 #include <math.h>
 
-// ── 全局变量 ──────────────────────────────────────────────────
-uint8_t  g_syncFlag  = 0x00;   // bit0=ADC1完成, bit1=ADC2完成
-PhaseState g_phaseState = PHASE_IDLE;
-float    g_measuredFreq  = 0.0f;
-float    g_measuredPhase = 0.0f;   // 度，输入-输出
-float    g_ddsFreq = 100000.0f;   // DDS输出频率（供mainoop.c显示）
-extern   AD9833_Handler hds;      // 在mainoop.c定义
-uint16_t g_adcIn[SAMPLE_NUM];      // ADC2: 输入信号 PA6
-uint16_t g_adcOut[SAMPLE_NUM];     // ADC1: DDS反馈 PB1
+#ifndef M_PI
+#define M_PI 3.1415926f
+#endif
 
-// ── 静态变量 ─────────────────────────────────────────────────
-static float s_pidIntegral = 0.0f;
-static uint8_t s_lockCnt = 0;
+// ── 全局变量 ────────────────────────────────────────
+uint16_t g_adcIn[PLL_FFT_NUM];      // ADC2: 外部输入
+uint16_t g_adcOut[PLL_FFT_NUM];     // ADC1: DDS反馈
+float    g_ddsFreq   = 100000.0f;    // DDS当前频率
+float    g_phaseView = 0.0f;         // 相位差(度)
+float    g_debugVinMax  = 0.0f;
+float    g_debugVinMin  = 4096.0f;
+float    g_debugVoutMax = 0.0f;
+float    g_debugVoutMin = 4096.0f;
 
-// ── DCache Invalidate（H743 DCache安全） ─────────────────────
-static void InvalidateADC(void)
+// ── 内部变量 ────────────────────────────────────────
+static float    s_fftBuf[2 * PLL_FFT_NUM];   // FFT输入/输出 (实虚交替)
+static float    s_fftMag[PLL_FFT_NUM];       // 幅度谱
+static arm_cfft_instance_f32 s_cfftInst;     // FFT实例
+static pid_struct_t s_phasePid;              // PID控制器
+
+static volatile uint8_t s_dataReady = 0;    // 0=无新数据 1=半满 2=全满
+static uint32_t s_loopCnt = 0;              // PID迭代计数
+
+// 外部引用
+extern AD9833_Handler  hds;
+extern TIM_HandleTypeDef  htim3;
+extern ADC_HandleTypeDef  hadc1;
+extern ADC_HandleTypeDef  hadc2;
+
+// ── 工具函数：寻找幅度谱峰值 ─────────────────────────
+static uint16_t findPeak(const float *mag, uint16_t start, uint16_t end)
 {
-    // SRAM1，Cache行对齐
-    uint32_t addrIn  = (uint32_t)g_adcIn;
-    uint32_t addrOut = (uint32_t)g_adcOut;
-    uint32_t sizeIn  = SAMPLE_NUM * sizeof(uint16_t);
-    uint32_t sizeOut = SAMPLE_NUM * sizeof(uint16_t);
-
-    // 32字节对齐
-    addrIn  &= ~0x1F;
-    addrOut &= ~0x1F;
-    sizeIn   = (sizeIn  + 31) & ~0x1F;
-    sizeOut  = (sizeOut + 31) & ~0x1F;
-
-    SCB_InvalidateDCache_by_Addr((uint32_t*)addrIn,  sizeIn);
-    SCB_InvalidateDCache_by_Addr((uint32_t*)addrOut, sizeOut);
+    uint16_t peak = start;
+    float maxVal = mag[start];
+    for (uint16_t i = start + 1; i <= end; i++) {
+        if (mag[i] > maxVal) {
+            maxVal = mag[i];
+            peak = i;
+        }
+    }
+    return peak;
 }
 
-// ── ADC DMA 完成回调 ──────────────────────────────────────────
+// ── DMA半传输完成回调 ─────────────────────────────────
+//    只做两件事: ①清DCache ②置标志
+void HAL_ADC_ConvHalfCpltCallback(ADC_HandleTypeDef* hadc)
+{
+    if (hadc->Instance != ADC1) return;
+
+    // H7关键：Invalidate DCache，读到DMA刚写入的数据
+    uint32_t addr = (uint32_t)g_adcIn & ~(uint32_t)0x1F;
+    uint32_t size = PLL_FFT_NUM * sizeof(uint16_t);
+    size = (size + 31) & ~(uint32_t)0x1F;
+    SCB_InvalidateDCache_by_Addr((uint32_t*)addr, size);
+
+    addr = (uint32_t)g_adcOut & ~(uint32_t)0x1F;
+    SCB_InvalidateDCache_by_Addr((uint32_t*)addr, size);
+
+    s_dataReady = 1;
+}
+
+// ── DMA传输完成回调 ───────────────────────────────────
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
 {
-    if (hadc->Instance == ADC2) {
-        g_syncFlag |= 0x01;   // ADC2完成
-    }
-    else if (hadc->Instance == ADC1) {
-        g_syncFlag |= 0x02;   // ADC1完成
-    }
+    if (hadc->Instance != ADC1) return;
+
+    uint32_t addr = (uint32_t)g_adcIn & ~(uint32_t)0x1F;
+    uint32_t size = PLL_FFT_NUM * sizeof(uint16_t);
+    size = (size + 31) & ~(uint32_t)0x1F;
+    SCB_InvalidateDCache_by_Addr((uint32_t*)addr, size);
+
+    addr = (uint32_t)g_adcOut & ~(uint32_t)0x1F;
+    SCB_InvalidateDCache_by_Addr((uint32_t*)addr, size);
+
+    s_dataReady = 2;
 }
 
-// ── 启动一次双ADC同步采样 ─────────────────────────────────────
-void phaseLockStart(void)
+// ── 初始化 ────────────────────────────────────────────
+void DPLL_Init(void)
 {
-    g_syncFlag = 0x00;
+    // 初始化CMSIS-DSP FFT实例
+    arm_cfft_init_f32(&s_cfftInst, PLL_FFT_NUM);
 
-    InvalidateADC();
+    // 初始化PID：Kp=3.0 Ki=0.02 Kd=0.1 (参考已验证参数)
+    pid_init(&s_phasePid, 3.0f, 0.02f, 0.1f, 12.0f, 16.0f, 0.0f);
 
-    // DMA NORMAL：每次需重新启动
-    HAL_ADC_Start_DMA(&hadc2, (uint32_t*)g_adcIn,  SAMPLE_NUM);
-    HAL_ADC_Start_DMA(&hadc1, (uint32_t*)g_adcOut, SAMPLE_NUM);
-    // TIM3已在main_init启动，TRGO=Update周期性触发ADC
+    // TIM3采样率设为256kHz
+    // TIM3在APB1，H7上APB1 prescaler≠1时 timer时钟=2×APB1=200MHz
+    // 200MHz / 781 ≈ 256.1kHz ≈ 256kHz
+    HAL_TIM_Base_Stop(&htim3);
+    __HAL_TIM_SET_AUTORELOAD(&htim3, 781 - 1);
+    __HAL_TIM_SET_COUNTER(&htim3, 0);
+    HAL_TIM_Base_Start(&htim3);
+
+    // 启动双通道ADC DMA (循环模式)
+    s_dataReady = 0;
+    HAL_ADC_Start_DMA(&hadc2, (uint32_t*)g_adcIn,  PLL_FFT_NUM);
+    HAL_ADC_Start_DMA(&hadc1, (uint32_t*)g_adcOut, PLL_FFT_NUM);
 }
 
-// ── 停止采样 ──────────────────────────────────────────────────
-void phaseLockStop(void)
+// ── FFT处理单个通道，返回基频相位 ──────────────────────
+static float fftGetPhase(const uint16_t *adcBuf, float *outFreq)
 {
-    HAL_ADC_Stop_DMA(&hadc2);
-    HAL_ADC_Stop_DMA(&hadc1);
-    g_phaseState = PHASE_IDLE;
+    // 1. 去直流
+    float dc = 0.0f;
+    for (int i = 0; i < PLL_FFT_NUM; i++) dc += (float)adcBuf[i];
+    dc /= PLL_FFT_NUM;
+
+    // 2. 构建复数输入 (实部=信号, 虚部=0)
+    for (int i = 0; i < PLL_FFT_NUM; i++) {
+        s_fftBuf[2 * i]     = (float)adcBuf[i] - dc;
+        s_fftBuf[2 * i + 1] = 0.0f;
+    }
+
+    // 3. 执行FFT (原地变换)
+    arm_cfft_f32(&s_cfftInst, s_fftBuf, 0, 1);
+
+    // 4. 计算幅度谱
+    arm_cmplx_mag_f32(s_fftBuf, s_fftMag, PLL_FFT_NUM);
+
+    // 5. 找基频峰值 (跳过DC bin 0, 以及附近的低频噪声)
+    uint16_t peakIdx = findPeak(s_fftMag, 2, PLL_FFT_NUM / 2);
+
+    // 6. 提取频率和相位
+    if (outFreq) {
+        *outFreq = (float)peakIdx * PLL_SAMPLE_RATE / PLL_FFT_NUM;
+    }
+
+    // atan2(imag, real) — CMSIS-DSP FFT输出格式: [real0, imag0, real1, imag1, ...]
+    return atan2f(s_fftBuf[2 * peakIdx + 1], s_fftBuf[2 * peakIdx]);
 }
 
-// ── 时域测频（过零检测） ──────────────────────────────────────
-static float MeasureFreq(void)
+// ── 主循环处理（在主函数while(1)中调用）────────────────
+void DPLL_Loop(void)
 {
-    // 找第一个上升过零点
-    uint16_t mid = 2048;  // 12bit ADC中点
-    int32_t firstZ = -1, nextZ = -1;
+    if (!s_dataReady) return;
 
-    for (int i = 1; i < SAMPLE_NUM && (nextZ == -1); i++) {
-        if (g_adcIn[i-1] < mid && g_adcIn[i] >= mid) {
-            // 线性插值求精确过零位置
-            float frac = (float)(mid - g_adcIn[i-1]) /
-                         (float)(g_adcIn[i] - g_adcIn[i-1]);
-            int32_t z = i - 1 + (int32_t)frac;
+    uint8_t flag = s_dataReady;
+    s_dataReady = 0;
 
-            if (firstZ == -1) {
-                firstZ = z;
-            } else {
-                nextZ = z;
-            }
-        }
+    // ── 从DMA缓冲区复制到栈上（防止处理中被DMA覆盖）───
+    uint16_t procIn[PLL_FFT_NUM];
+    uint16_t procOut[PLL_FFT_NUM];
+    memcpy(procIn,  g_adcIn,  sizeof(procIn));
+    memcpy(procOut, g_adcOut, sizeof(procOut));
+
+    // ── FFT测相：输入信号 ──
+    float freqIn;
+    float phaseIn = fftGetPhase(procIn, &freqIn);
+
+    // ── FFT测相：DDS输出反馈 ──
+    float freqOut_unused;
+    float phaseOut = fftGetPhase(procOut, &freqOut_unused);
+
+    // ── 计算相位误差 ──
+    float phaseErr = phaseIn - phaseOut;
+    while (phaseErr > M_PI)  phaseErr -= 2.0f * M_PI;
+    while (phaseErr < -M_PI) phaseErr += 2.0f * M_PI;
+
+    g_phaseView = phaseErr * 57.29578f;  // rad → deg
+
+    // ── PID控制：相位误差 → 频率修正量 ──
+    //    参考方案：g_totalFreq = g_baseFreq - pid_calc(pid, 0, phaseErr)
+    float deltaFreq = pid_calc(&s_phasePid, 0.0f, phaseErr);
+    g_ddsFreq -= deltaFreq;
+
+    // ── 频率限幅 ──
+    if (g_ddsFreq > 150000.0f) g_ddsFreq = 150000.0f;
+    if (g_ddsFreq < 50000.0f)  g_ddsFreq = 50000.0f;
+
+    // ── 更新AD9833 ──
+    AD9833_SetFrequency(&hds, g_ddsFreq);
+
+    // ── 调试：记录ADC原始值范围 ──
+    for (int i = 0; i < PLL_FFT_NUM; i++) {
+        if (procIn[i]  > g_debugVinMax)  g_debugVinMax  = procIn[i];
+        if (procIn[i]  < g_debugVinMin)  g_debugVinMin  = procIn[i];
+        if (procOut[i] > g_debugVoutMax) g_debugVoutMax = procOut[i];
+        if (procOut[i] < g_debugVoutMin) g_debugVoutMin = procOut[i];
     }
 
-    if (firstZ != -1 && nextZ != -1) {
-        float period_samples = (float)(nextZ - firstZ);
-        float fs = TIM3_TRIGGER_FREQ;  // 采样率
-        return fs / period_samples;
-    }
-    return g_measuredFreq;  // 失败则返回上次值
-}
-
-// ── 时域测相（过零相位差） ─────────────────────────────────────
-static float MeasurePhase(void)
-{
-    uint16_t mid = 2048;
-    int32_t zIn = -1, zOut = -1;
-
-    // 输入信号过零
-    for (int i = 1; i < SAMPLE_NUM && zIn == -1; i++) {
-        if (g_adcIn[i-1] < mid && g_adcIn[i] >= mid) {
-            float frac = (float)(mid - g_adcIn[i-1]) /
-                         (float)(g_adcIn[i] - g_adcIn[i-1]);
-            zIn = i - 1 + (int32_t)frac;
-            break;
-        }
-    }
-
-    // 输出信号过零
-    for (int i = 1; i < SAMPLE_NUM && zOut == -1; i++) {
-        if (g_adcOut[i-1] < mid && g_adcOut[i] >= mid) {
-            float frac = (float)(mid - g_adcOut[i-1]) /
-                         (float)(g_adcOut[i] - g_adcOut[i-1]);
-            zOut = i - 1 + (int32_t)frac;
-            break;
-        }
-    }
-
-    if (zIn != -1 && zOut != -1) {
-        float diff_samples = (float)(zOut - zIn);
-        if (diff_samples < 0) diff_samples += SAMPLE_NUM;
-        float phase_deg = diff_samples / SAMPLE_NUM * 360.0f;
-        return phase_deg;
-    }
-    return g_measuredPhase;
-}
-
-// ── PID 调频 ──────────────────────────────────────────────────
-static void PidAdjust(float freqError)
-{
-    // 比例项
-    float Pout = PID_KP * freqError;
-
-    // 积分项（限幅）
-    s_pidIntegral += freqError;
-    if (s_pidIntegral > 5000.0f)  s_pidIntegral = 5000.0f;
-    if (s_pidIntegral < -5000.0f) s_pidIntegral = -5000.0f;
-    float Iout = PID_KI * s_pidIntegral;
-
-    // 新的DDS频率
-    g_ddsFreq += Pout + Iout;
-
-    // 限幅：只允许在目标频率附近微调
-    if (g_ddsFreq > TARGET_FREQ + 5000.0f) g_ddsFreq = TARGET_FREQ + 5000.0f;
-    if (g_ddsFreq < TARGET_FREQ - 5000.0f) g_ddsFreq = TARGET_FREQ - 5000.0f;
-
-    // 设置AD9833频率
-    AD9833_SetFrequency(&hds, (uint32_t)g_ddsFreq);
-}
-
-// ── 主状态机循环（在main_loop里周期性调用） ────────────────────
-static uint32_t s_tick = 0;  // 超时检测
-
-void sampleLoop(void)
-{
-    switch (g_phaseState) {
-
-        case PHASE_IDLE:
-            // 上电后自动开始
-            g_phaseState = PHASE_SAMPLING;
-            s_tick = HAL_GetTick();
-            phaseLockStart();
-            break;
-
-        case PHASE_SAMPLING:
-            // 等待两个ADC都完成
-            if (g_syncFlag == 0x03) {
-                g_phaseState = PHASE_PROC;
-            }
-            // 超时保护：50ms
-            if (HAL_GetTick() - s_tick > 50) {
-                phaseLockStart();  // 重新启动
-                s_tick = HAL_GetTick();
-            }
-            break;
-
-        case PHASE_PROC:
-            InvalidateADC();
-
-            // 时域测频
-            g_measuredFreq = MeasureFreq();
-
-            // 时域测相
-            g_measuredPhase = MeasurePhase();
-
-            // PID调频：让DDS频率跟踪输入频率
-            {
-                float freqError = g_measuredFreq - g_ddsFreq;
-                PidAdjust(freqError);
-            }
-
-            // 判断锁定：频率误差<10Hz认为锁定
-            if (fabsf(g_measuredFreq - g_ddsFreq) < 10.0f) {
-                s_lockCnt++;
-            } else {
-                s_lockCnt = 0;
-            }
-
-            // OLED显示（由mainoop.c统一刷新，这里只更新数据）
-            // 重新启动采样
-            g_phaseState = PHASE_SAMPLING;
-            s_tick = HAL_GetTick();
-            phaseLockStart();
-            break;
-
-        default:
-            g_phaseState = PHASE_IDLE;
-            break;
-    }
+    s_loopCnt++;
 }

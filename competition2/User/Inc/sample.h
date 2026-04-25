@@ -1,42 +1,35 @@
 /**
- * sample.h - 时域锁相环头文件
- * 双ADC同步采样：ADC2(PA6)=输入, ADC1(PB1)=DDS输出反馈
+ * sample.h — 锁相环(DPLL) 头文件
+ * 方法：同步采样 + FFT测相 + PID控制
+ * 架构参考 01_signal_separator 验证过的方案
  */
 
-#ifndef __SAMPLE_H__
-#define __SAMPLE_H__
+#ifndef __SAMPLE_H
+#define __SAMPLE_H
 
 #include "stm32h7xx_hal.h"
+#include "arm_math.h"
+#include "pid.h"
 
-// ── 宏定义 ──────────────────────────────────────────────
-#define SAMPLE_NUM       512
-#define TARGET_FREQ      100000.0f   // 目标频率 100kHz
-#define PID_KP           0.1f        // 比例系数
-#define PID_KI           0.01f       // 积分系数
-#define TIM3_TRIGGER_FREQ  1000000.0f  // TIM3触发频率=1MHz
+#define PLL_FFT_NUM      256        // FFT点数 = 单次采样点数
+#define PLL_SAMPLE_RATE  256000.0f  // 采样率 256kHz
 
-// ── 锁相状态机 ──────────────────────────────────────────
-typedef enum {
-    PHASE_IDLE,       // 空闲
-    PHASE_SAMPLING,   // 正在采样
-    PHASE_PROC,       // 处理数据、调频
-} PhaseState;
+// ── 全局变量 ────────────────────────────────────
+extern uint16_t g_adcIn[PLL_FFT_NUM];   // ADC2: 外部输入信号
+extern uint16_t g_adcOut[PLL_FFT_NUM];  // ADC1: DDS输出反馈
+extern float    g_ddsFreq;              // DDS当前输出频率 (Hz)
+extern float    g_phaseView;            // 相位差 (度) 用于OLED显示
 
-// ── 外部变量声明 ────────────────────────────────────────
-extern PhaseState g_phaseState;
-extern uint8_t    g_syncFlag;
-extern float      g_measuredFreq;   // 测量到的输入频率(Hz)
-extern float      g_measuredPhase;  // 相位差(度)
-extern float      g_ddsFreq;        // DDS输出频率(Hz)，供OLED显示
-extern uint16_t   g_adcIn[SAMPLE_NUM];   // ADC2: 输入信号(PA6)
-extern uint16_t   g_adcOut[SAMPLE_NUM];  // ADC1: DDS输出反馈(PB1)
+// 调试变量
+extern float    g_debugVinMax;
+extern float    g_debugVinMin;
+extern float    g_debugVoutMax;
+extern float    g_debugVoutMin;
 
-// ── 函数声明 ────────────────────────────────────────────
-void sampleLoop(void);
-void phaseLockStart(void);
-void phaseLockStop(void);
-
-// HAL回调函数（在stm32h7xx_it.c里调用）
+// ── 函数声明 ────────────────────────────────────
+void DPLL_Init(void);
+void DPLL_Loop(void);
+void HAL_ADC_ConvHalfCpltCallback(ADC_HandleTypeDef* hadc);
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc);
 
-#endif
+#endif /* __SAMPLE_H */
