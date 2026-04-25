@@ -42,8 +42,10 @@ typedef struct {
     uint16_t gpio_pin;
     GPIO_TypeDef *gpio_port;
     uint32_t press_start;
+    uint32_t last_press_time;  // 上次按下时间（消抖用）
     uint8_t  press_active;
     uint8_t  click_count;
+    uint8_t  long_press_fired; // 长按已触发标志（防重复）
 
     // 当前控制目标
     ENC_CtrlTarget_t target;
@@ -62,15 +64,16 @@ typedef struct {
     uint8_t rotated;     // 1=本次Update有旋转
 } ENC_Handle;
 
+// EXTI按键中断设置的全局标志（在stm32h7xx_it.c的EXTI0_IRQHandler里设）
+extern volatile uint8_t  enc_key_pressed;
+extern volatile uint32_t enc_key_timestamp;
+
 // 初始化
 void ENC_Init(ENC_Handle *h, TIM_HandleTypeDef *htim,
                 GPIO_TypeDef *port, uint16_t pin);
 
 // 更新（主循环调用，检测旋转+按键）
 ENC_Event_t ENC_Update(ENC_Handle *h);
-
-// 应用编码器值到DDS（12项目不用）
-// void ENC_ApplyToDDS(ENC_Handle *h, DDS_Handle *dds);
 
 // 设置控制目标
 void ENC_SetTarget(ENC_Handle *h, ENC_CtrlTarget_t target);

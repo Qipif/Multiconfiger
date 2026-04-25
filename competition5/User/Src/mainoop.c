@@ -1,34 +1,36 @@
 ﻿/**
-* competition4 - 硬件边沿同步器 + 数字移相
+* competition5 - 硬件边沿同步器 + 数字移相 + 相位校准 + 预设
 *
-* ✅ EXTI双边沿中断→TIM2硬件比较→DAC输出 = 事件驱动
+* v4: 按键改EXTI中断驱动+消抖+时间片，EXTI只RISING
 *
-* 移相原理：
-*   相位0-180°：延时 phase/360*周期 后跟随输入
-*   相位180-360°：反转输出 + 延时 (phase-180)/360*周期
-*   延时永远 ≤ 半周期 → 不会丢边沿
-*
-* 幅值固定2.7V（DAC1_CH1, PA4）
+* 模式1：编码器调实时相位，长按PA0=校准（示波器180°时按下）
+* 模式2：编码器调预设值（第三行显示），短按PA0=写入预设值到相位
+* 短按PA0：模式1↔2切换
+* OLED右上角：1/2 表示当前模式
 *
 * 硬件连接：
-*   PA6  ← 输入方波（EXTI双边沿中断）
+*   PA6  ← 输入方波（EXTI仅上升沿中断）
 *   PA4  → 输出方波（DAC1_CH1，2.7V固定幅值）
-*   PE9/PE11 ← 编码器 (TIM1) — 旋转调相位，5°步进
-*   PA0  ← 按键 — 短按校准（归零）
+*   PE9/PE11 ← 编码器 (TIM1) — 5°步进
+*   PA0  ← 按键 — EXTI0中断驱动，主循环5ms时间片消费
 */
 
 #include "main.h"
 #include "oled.h"
-#include "ad9833.h"
 #include "edgesync.h"
 #include "encoder.h"
 #include <stdio.h>
 
-// ── AD9833句柄 ─────────────────────────────────────
-AD9833_Handler hds;
+// ── 模式 ─────────────────────────────────────────────
+#define MODE_PHASE  1   // 调实时相位 + 长按校准
+#define MODE_PRESET 2   // 调预设值 + 短按写入
 
 // ── 编码器 ─────────────────────────────────────────
 static ENC_Handle enc;
+
+// ── 状态 ──────────────────────────────────────────────
+static uint8_t  cur_mode   = MODE_PHASE;  // 当前模式
+static float    preset_val = 0.0f;        // 预设相位值
 
 // ── 初始化 ──────────────────────────────────────────
 void main_init(void)
@@ -41,17 +43,11 @@ void main_init(void)
     OLED_Init();
     OLED_ShowString(1, 1, "EDGE SYNC  ");
 
-    // AD9833初始化：SPI2, CS=PC0, 50kHz正弦波
-    AD9833_Init(&hds, wave_sine, 50000, 0, &hspi2, GPIOC, GPIO_PIN_0);
-
-    // 边沿同步器初始化：PA6 EXTI双边沿 → PA4 DAC输出
-    // ⚠️ 必须在MX_ADC2_Init/MX_DAC1_Init之后调用
+    // 边沿同步器初始化
     EdgeSync_Init();
-
-    // 幅值固定2.7V
     EdgeSync_SetAmp(2.7f);
 
-    // 不再需要TIM3/TIM4（ADC/DAC触发用），停掉省资源
+    // 停掉不需要的定时器
     HAL_TIM_Base_Stop(&htim3);
     HAL_TIM_Base_Stop(&htim4);
 
@@ -61,23 +57,47 @@ void main_init(void)
     enc.phase_range = (ENC_ParamRange){5.0f, 5.0f, 5.0f, 0.0f, 355.0f};
     enc.cur_phase = 0.0f;
 
-    OLED_ShowString(1, 1, "EDGE SYNC  ");
+    OLED_ShowString(1, 1, "EDGE SYNC 1");
 }
 
 // ── 主循环 ──────────────────────────────────────────
 void main_loop(void)
 {
-    // 编码器更新
-    ENC_Event_t evt = ENC_Update(&enc);
-    if (enc.rotated) {
-        enc.rotated = 0;
-        EdgeSync_SetPhase(enc.cur_phase);
-    }
+    // 编码器+按键：5ms时间片（防被高频中断打碎）
+    static uint32_t key_tick = 0;
+    uint32_t now = HAL_GetTick();
 
-    // PA0短按：校准（相位归零）
-    if (evt == ENC_EVT_CLICK) {
-        enc.cur_phase = 0.0f;
-        EdgeSync_SetPhase(0.0f);
+    if (now - key_tick >= 5) {
+        key_tick = now;
+
+        ENC_Event_t evt = ENC_Update(&enc);
+
+        // ── 旋转处理 ──
+        if (enc.rotated) {
+            enc.rotated = 0;
+            if (cur_mode == MODE_PHASE) {
+                EdgeSync_SetPhase(enc.cur_phase);
+            } else {
+                preset_val = enc.cur_phase;
+            }
+        }
+
+        // ── 短按PA0：模式切换 ──
+        if (evt == ENC_EVT_CLICK) {
+            if (cur_mode == MODE_PHASE) {
+                cur_mode = MODE_PRESET;
+                enc.cur_phase = preset_val;
+            } else {
+                enc.cur_phase = preset_val;
+                EdgeSync_SetPhase(preset_val);
+                cur_mode = MODE_PHASE;
+            }
+        }
+
+        // ── 长按PA0：校准（模式1下有效） ──
+        if (evt == ENC_EVT_LONG_PRESS && cur_mode == MODE_PHASE) {
+            EdgeSync_Calibrate(enc.cur_phase);
+        }
     }
 
     // 测频更新
@@ -85,18 +105,32 @@ void main_loop(void)
 
     // OLED 200ms刷新
     static uint32_t t = 0;
-    if (HAL_GetTick() - t < 200) return;
-    t = HAL_GetTick();
+    if (now - t < 200) return;
+    t = now;
 
     float freq = EdgeSync_GetFreq();
 
     char buf[17];
-    sprintf(buf, "%s %.0fHz",
-            freq > 0 ? "LK" : "..",
-            freq);
+
+    // 第一行：锁定状态 + 频率 + 右上角模式号
+    sprintf(buf, "%s%.0fHz    %d",
+            freq > 0 ? "LK:" : ".. ",
+            freq,
+            cur_mode);
     OLED_ShowString(1, 1, buf);
 
-    sprintf(buf, "PH: %.0f       ",
-            enc.cur_phase);
+    // 第二行：当前相位
+    if (cur_mode == MODE_PHASE) {
+        sprintf(buf, "PH:%.0f       ",
+                enc.cur_phase);
+    } else {
+        sprintf(buf, "PH:%.0f       ",
+                EdgeSync_GetPhase());
+    }
     OLED_ShowString(2, 1, buf);
+
+    // 第三行：预设值（模式2可编辑）
+    sprintf(buf, "PR:%.0f       ",
+            preset_val);
+    OLED_ShowString(3, 1, buf);
 }

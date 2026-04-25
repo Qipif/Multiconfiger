@@ -4,6 +4,11 @@
 
 #define CLICK_TIMEOUT   300   // 双击间隔ms
 #define LONG_PRESS_MS   1000  // 长按阈值
+#define DEBOUNCE_MS     20    // 消抖时间ms
+
+// EXTI按键ISR设的标志（encoder.c消费）
+volatile uint8_t  enc_key_pressed = 0;    // 1=EXTI检测到按下
+volatile uint32_t enc_key_timestamp = 0;  // EXTI触发时的时间戳
 
 void ENC_Init(ENC_Handle *h, TIM_HandleTypeDef *htim,
                 GPIO_TypeDef *port, uint16_t pin) {
@@ -93,21 +98,37 @@ ENC_Event_t ENC_Update(ENC_Handle *h) {
         }
     }
 
-    // 按键检测
-    uint8_t pin_state = HAL_GPIO_ReadPin(h->gpio_port, h->gpio_pin);
+    // 按键检测（EXTI中断驱动 + 消抖）
     uint32_t now = HAL_GetTick();
 
-    if (pin_state == GPIO_PIN_RESET) {  // 按下
-        if (!h->press_active) {
+    // 检查EXTI中断设置的标志
+    if (enc_key_pressed) {
+        enc_key_pressed = 0;
+        uint32_t press_time = enc_key_timestamp;
+
+        // 消抖：太近的连续触发忽略
+        if (now - h->last_press_time < DEBOUNCE_MS) {
+            // 抖动，忽略
+        } else if (!h->press_active) {
+            // 新按下
             h->press_active = 1;
-            h->press_start = now;
+            h->press_start = press_time;
+            h->last_press_time = now;
         }
-    } else {  // 松开
-        if (h->press_active) {
+    }
+
+    // 检查是否松开（轮询方式，因为有消抖保护）
+    if (h->press_active) {
+        uint8_t pin_state = HAL_GPIO_ReadPin(h->gpio_port, h->gpio_pin);
+        if (pin_state != GPIO_PIN_RESET) {
+            // 松开
             uint32_t dur = now - h->press_start;
             h->press_active = 0;
 
-            if (dur >= LONG_PRESS_MS) {
+            // 消抖：太短的按下忽略
+            if (dur < DEBOUNCE_MS) {
+                // 抖动，忽略
+            } else if (dur >= LONG_PRESS_MS) {
                 evt = ENC_EVT_LONG_PRESS;
                 h->click_count = 0;
             } else {
@@ -119,6 +140,14 @@ ENC_Event_t ENC_Update(ENC_Handle *h) {
                     evt = ENC_EVT_DOUBLE_CLICK;
                     h->click_count = 0;
                 }
+            }
+        } else {
+            // 仍然按下，检查长按（实时检测，不用等松开）
+            uint32_t dur = now - h->press_start;
+            if (dur >= LONG_PRESS_MS && !h->long_press_fired) {
+                h->long_press_fired = 1;
+                evt = ENC_EVT_LONG_PRESS;
+                h->click_count = 0;
             }
         }
     }
@@ -134,29 +163,6 @@ ENC_Event_t ENC_Update(ENC_Handle *h) {
     return evt;
 }
 
-// ENC_ApplyToDDS: 12项目不用，已注释
-/*
-void ENC_ApplyToDDS(ENC_Handle *h, DDS_Handle *dds) {
-    switch (h->target) {
-    case ENC_CTRL_FREQ:
-        DDS_SetFreq(dds, h->cur_freq);
-        break;
-    case ENC_CTRL_AMP:
-        DDS_SetAmp(dds, h->cur_amp);
-        break;
-    case ENC_CTRL_PHASE:
-        DDS_SetPhase(dds, h->cur_phase);
-        break;
-    case ENC_CTRL_WAVE:
-        DDS_SetWave(dds, h->cur_wave, dds->freq, dds->amp_vpp, dds->phase_deg);
-        break;
-    default: break;
-    }
-    h->cur_freq = dds->freq;
-    h->cur_amp = dds->amp_vpp;
-}
-*/
-
 void ENC_SetTarget(ENC_Handle *h, ENC_CtrlTarget_t target) {
     h->target = target;
 }
@@ -170,8 +176,6 @@ void ENC_NextTarget(ENC_Handle *h) {
 }
 
 uint8_t ENC_GetGear(ENC_Handle *h) {
-    // 简化：根据总旋转量粗略判断速度
-    // 实际应该用时间差，这里先用步数近似
     return 0;  // TODO: 实现连续档位速度检测
 }
 

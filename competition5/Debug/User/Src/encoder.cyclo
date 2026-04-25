@@ -1,7 +1,7 @@
-../User/Src/encoder.c:8:6:ENC_Init	1
-../User/Src/encoder.c:32:13:ENC_Update	36
-../User/Src/encoder.c:160:6:ENC_SetTarget	1
-../User/Src/encoder.c:164:18:ENC_GetTarget	1
-../User/Src/encoder.c:168:6:ENC_NextTarget	1
-../User/Src/encoder.c:172:9:ENC_GetGear	1
-../User/Src/encoder.c:178:13:ENC_TargetStr	7
+../User/Src/encoder.c:13:6:ENC_Init	1
+../User/Src/encoder.c:37:13:ENC_Update	41
+../User/Src/encoder.c:166:6:ENC_SetTarget	1
+../User/Src/encoder.c:170:18:ENC_GetTarget	1
+../User/Src/encoder.c:174:6:ENC_NextTarget	1
+../User/Src/encoder.c:178:9:ENC_GetGear	1
+../User/Src/encoder.c:182:13:ENC_TargetStr	7

@@ -23,6 +23,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "edgesync.h"
+#include "encoder.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -205,11 +206,18 @@ void SysTick_Handler(void)
 
 /**
   * @brief This function handles EXTI line0 interrupt.
+  *        PA0按键 → 只记时间戳+设flag，主循环消费
   */
 void EXTI0_IRQHandler(void)
 {
   /* USER CODE BEGIN EXTI0_IRQn 0 */
-
+  if (__HAL_GPIO_EXTI_GET_IT(KEY_Pin) != RESET)
+  {
+    __HAL_GPIO_EXTI_CLEAR_IT(KEY_Pin);
+    enc_key_timestamp = HAL_GetTick();
+    enc_key_pressed = 1;
+    return;  // 不走HAL回调，直接返回
+  }
   /* USER CODE END EXTI0_IRQn 0 */
   HAL_GPIO_EXTI_IRQHandler(KEY_Pin);
   /* USER CODE BEGIN EXTI0_IRQn 1 */
