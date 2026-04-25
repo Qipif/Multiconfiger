@@ -636,3 +636,4 @@
 "./User/Src/mypll.o"
 "./User/Src/oled.o"
 "./User/Src/pid.o"
+"./User/Src/sample.o"

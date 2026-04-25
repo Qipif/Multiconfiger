@@ -16,7 +16,8 @@ C_SRCS += \
 ../User/Src/myfft.c \
 ../User/Src/mypll.c \
 ../User/Src/oled.c \
-../User/Src/pid.c 
+../User/Src/pid.c \
+../User/Src/sample.c 
 
 OBJS += \
 ./User/Src/ad9833.o \
@@ -30,7 +31,8 @@ OBJS += \
 ./User/Src/myfft.o \
 ./User/Src/mypll.o \
 ./User/Src/oled.o \
-./User/Src/pid.o 
+./User/Src/pid.o \
+./User/Src/sample.o 
 
 C_DEPS += \
 ./User/Src/ad9833.d \
@@ -44,7 +46,8 @@ C_DEPS += \
 ./User/Src/myfft.d \
 ./User/Src/mypll.d \
 ./User/Src/oled.d \
-./User/Src/pid.d 
+./User/Src/pid.d \
+./User/Src/sample.d 
 
 
 # Each subdirectory must supply rules for building sources it contributes
@@ -54,7 +57,7 @@ User/Src/%.o User/Src/%.su User/Src/%.cyclo: ../User/Src/%.c User/Src/subdir.mk
 clean: clean-User-2f-Src
 
 clean-User-2f-Src:
-	-$(RM) ./User/Src/ad9833.cyclo ./User/Src/ad9833.d ./User/Src/ad9833.o ./User/Src/ad9833.su ./User/Src/ad9959.cyclo ./User/Src/ad9959.d ./User/Src/ad9959.o ./User/Src/ad9959.su ./User/Src/encoder.cyclo ./User/Src/encoder.d ./User/Src/encoder.o ./User/Src/encoder.su ./User/Src/font.cyclo ./User/Src/font.d ./User/Src/font.o ./User/Src/font.su ./User/Src/mainoop.cyclo ./User/Src/mainoop.d ./User/Src/mainoop.o ./User/Src/mainoop.su ./User/Src/mydds.cyclo ./User/Src/mydds.d ./User/Src/mydds.o ./User/Src/mydds.su ./User/Src/mydds_dual.cyclo ./User/Src/mydds_dual.d ./User/Src/mydds_dual.o ./User/Src/mydds_dual.su ./User/Src/mydraw.cyclo ./User/Src/mydraw.d ./User/Src/mydraw.o ./User/Src/mydraw.su ./User/Src/myfft.cyclo ./User/Src/myfft.d ./User/Src/myfft.o ./User/Src/myfft.su ./User/Src/mypll.cyclo ./User/Src/mypll.d ./User/Src/mypll.o ./User/Src/mypll.su ./User/Src/oled.cyclo ./User/Src/oled.d ./User/Src/oled.o ./User/Src/oled.su ./User/Src/pid.cyclo ./User/Src/pid.d ./User/Src/pid.o ./User/Src/pid.su
+	-$(RM) ./User/Src/ad9833.cyclo ./User/Src/ad9833.d ./User/Src/ad9833.o ./User/Src/ad9833.su ./User/Src/ad9959.cyclo ./User/Src/ad9959.d ./User/Src/ad9959.o ./User/Src/ad9959.su ./User/Src/encoder.cyclo ./User/Src/encoder.d ./User/Src/encoder.o ./User/Src/encoder.su ./User/Src/font.cyclo ./User/Src/font.d ./User/Src/font.o ./User/Src/font.su ./User/Src/mainoop.cyclo ./User/Src/mainoop.d ./User/Src/mainoop.o ./User/Src/mainoop.su ./User/Src/mydds.cyclo ./User/Src/mydds.d ./User/Src/mydds.o ./User/Src/mydds.su ./User/Src/mydds_dual.cyclo ./User/Src/mydds_dual.d ./User/Src/mydds_dual.o ./User/Src/mydds_dual.su ./User/Src/mydraw.cyclo ./User/Src/mydraw.d ./User/Src/mydraw.o ./User/Src/mydraw.su ./User/Src/myfft.cyclo ./User/Src/myfft.d ./User/Src/myfft.o ./User/Src/myfft.su ./User/Src/mypll.cyclo ./User/Src/mypll.d ./User/Src/mypll.o ./User/Src/mypll.su ./User/Src/oled.cyclo ./User/Src/oled.d ./User/Src/oled.o ./User/Src/oled.su ./User/Src/pid.cyclo ./User/Src/pid.d ./User/Src/pid.o ./User/Src/pid.su ./User/Src/sample.cyclo ./User/Src/sample.d ./User/Src/sample.o ./User/Src/sample.su
 
 .PHONY: clean-User-2f-Src
 
