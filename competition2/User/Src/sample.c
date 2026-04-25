@@ -14,10 +14,11 @@
 
 // ── 全局变量 ──────────────────────────────────────────────────
 uint8_t  g_syncFlag  = 0x00;   // bit0=ADC1完成, bit1=ADC2完成
-uint8_t  g_phaseState = PHASE_IDLE;
+PhaseState g_phaseState = PHASE_IDLE;
 float    g_measuredFreq  = 0.0f;
 float    g_measuredPhase = 0.0f;   // 度，输入-输出
-float    g_ddsFreq = 100000.0f;    // DDS输出频率（供mainoop.c显示）
+float    g_ddsFreq = 100000.0f;   // DDS输出频率（供mainoop.c显示）
+extern   AD9833_Handler hds;      // 在mainoop.c定义
 uint16_t g_adcIn[SAMPLE_NUM];      // ADC2: 输入信号 PA6
 uint16_t g_adcOut[SAMPLE_NUM];     // ADC1: DDS反馈 PB1
 
@@ -161,7 +162,7 @@ static void PidAdjust(float freqError)
     if (g_ddsFreq < TARGET_FREQ - 5000.0f) g_ddsFreq = TARGET_FREQ - 5000.0f;
 
     // 设置AD9833频率
-    AD9833_SetFreq(&hds, g_ddsFreq);
+    AD9833_SetFrequency(&hds, (uint32_t)g_ddsFreq);
 }
 
 // ── 主状态机循环（在main_loop里周期性调用） ────────────────────
