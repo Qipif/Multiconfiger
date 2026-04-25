@@ -5,7 +5,7 @@
 #define DAC_MID  2048
 #define DAC_MAX  4095
 
-// 零交叉检测间隔：1MHz/100kHz=10点/周期，每5点检测一次足够
+// 零交叉检测间隔：1MHz/100kHz=10点/周期，每5点检测一次
 #define ZC_CHECK_INTERVAL  5
 
 // ---- 单样本处理（灵魂） ----

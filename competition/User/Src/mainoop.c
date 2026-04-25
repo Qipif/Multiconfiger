@@ -10,6 +10,9 @@
 
 #define ADC_BUF_LEN  2048
 
+// 设为1=直通测试(ADC→DAC旁路APLL)，设0=正常APLL模式
+#define BYPASS_TEST  1
+
 static APLL_Handle hapll;
 static ENC_Handle enc;
 
@@ -35,11 +38,10 @@ void main_init(void)
 
     OLED_Init();
 
-    // APLL初始化：1MHz采样率，100kHz输入时SPP=10
+    // APLL初始化：1MHz采样率
     APLL_Init(&hapll, 1000000.0f);
 
     // TIM3驱动ADC2, TIM4驱动DAC, 都设1MHz
-    // 定时器时钟=200MHz, 200MHz/1MHz=200, Period=199
     TIM_Set_Frequency(&htim3, 1000000);
     TIM_Set_Frequency(&htim4, 1000000);
 
@@ -117,8 +119,15 @@ void HAL_ADC_ConvHalfCpltCallback(ADC_HandleTypeDef *hadc)
     // DCache invalidation: DMA写了前半帧，CPU要读到真实数据
     SCB_InvalidateDCache_by_Addr((uint32_t*)adc2_buf, half * sizeof(uint16_t));
 
+#if BYPASS_TEST
+    // 直通：ADC数据直接复制到DAC，跳过APLL
+    for (uint16_t i = 0; i < half; i++) {
+        hapll.dac_buf[i] = adc2_buf[i];
+    }
+#else
     // 处理前半帧 → 填DAC前半帧
     APLL_Process(&hapll, adc2_buf, 0, half);
+#endif
 
     // DCache清理: 让DMA把DAC数据搬走
     SCB_CleanDCache_by_Addr((uint32_t*)hapll.dac_buf, APLL_DAC_BUF * sizeof(uint16_t));
@@ -133,8 +142,15 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
     // DCache invalidation: DMA写了后半帧，CPU要读到真实数据
     SCB_InvalidateDCache_by_Addr((uint32_t*)(adc2_buf + half), half * sizeof(uint16_t));
 
+#if BYPASS_TEST
+    // 直通：ADC数据直接复制到DAC，跳过APLL
+    for (uint16_t i = 0; i < half; i++) {
+        hapll.dac_buf[half + i] = adc2_buf[half + i];
+    }
+#else
     // 处理后半帧 → 填DAC后半帧
     APLL_Process(&hapll, adc2_buf + half, half, half);
+#endif
 
     // DCache清理: 让DMA把DAC数据搬走
     SCB_CleanDCache_by_Addr((uint32_t*)hapll.dac_buf, APLL_DAC_BUF * sizeof(uint16_t));

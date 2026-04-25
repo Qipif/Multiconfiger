@@ -1,5 +1,5 @@
-../User/Src/mainoop.c:21:13:TIM_Set_Frequency	1
-../User/Src/mainoop.c:30:6:main_init	1
-../User/Src/mainoop.c:67:6:main_loop	8
-../User/Src/mainoop.c:111:6:HAL_ADC_ConvHalfCpltCallback	7
-../User/Src/mainoop.c:127:6:HAL_ADC_ConvCpltCallback	7
+../User/Src/mainoop.c:24:13:TIM_Set_Frequency	1
+../User/Src/mainoop.c:33:6:main_init	1
+../User/Src/mainoop.c:69:6:main_loop	8
+../User/Src/mainoop.c:113:6:HAL_ADC_ConvHalfCpltCallback	8
+../User/Src/mainoop.c:136:6:HAL_ADC_ConvCpltCallback	8
