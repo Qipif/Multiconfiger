@@ -1,157 +1,111 @@
-﻿#include "main.h"
+﻿/*
+ * @description: C题主程序 —— 信号变换与李萨如图显示装置（DDS方案）
+ * @approach:   AD9833 DDS输出 + 硬件移相器 + 本地李萨如显示
+ * @note:        基本要求(1)移相器用硬件全通滤波，发挥部分程控移相用DDS
+ */
+#include "main.h"
 #include "oled.h"
-#include "apll.h"
 #include "encoder.h"
+#include "ad9833.h"
+#include "xform.h"
 #include <stdio.h>
+#include <math.h>
 
-// APLL: 数字延迟线锁相
-// ADC采样→ring缓冲→延迟N点(浮点插值)→DAC输出
-// 同时钟 → 天然锁相
+// ── 双DDS对象 ──────────────────────────────────────────────────
+//  dds1: 程控移相输出（Y轴，100kHz，相位0~180°可调）
+//  dds2: 2分频输出（X轴B信号，50kHz）
+static AD9833_Handle s_dds1;
+static AD9833_Handle s_dds2;
 
-#define ADC_BUF_LEN  2048
+// ── 系统状态 ──────────────────────────────────────────────────────
+typedef enum { XSRC_A, XSRC_B } XSource;  // A=直通，B=2分频
+static XSource  s_xsrc  = XSRC_A;
+static float    s_phase = 0.0f;    // 当前移相角度（度）
+static uint8_t  s_amp   = 1;       // 幅度选择（0=0.5, 1=1.0, 2=2.0）
 
-// 设为1=直通测试(ADC→DAC旁路APLL)，设0=正常APLL模式
-#define BYPASS_TEST  1
-
-static APLL_Handle hapll;
-static ENC_Handle enc;
-
-static uint16_t adc2_buf[ADC_BUF_LEN];
-static volatile float measured_freq = 0.0f;
-static volatile uint8_t apll_running = 0;
-
-// 设置定时器频率
-static void TIM_Set_Frequency(TIM_HandleTypeDef *htim, uint32_t freq_hz)
-{
-    uint32_t timer_clk = HAL_RCC_GetPCLK1Freq() * 2;
-    HAL_TIM_Base_Stop(htim);
-    __HAL_TIM_SET_AUTORELOAD(htim, timer_clk / freq_hz - 1);
-    __HAL_TIM_SET_COUNTER(htim, 0);
-    HAL_TIM_Base_Start(htim);
-}
-
+// ── 初始化 ──────────────────────────────────────────────────────────
 void main_init(void)
 {
     CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
-    DWT->CYCCNT = 0;
-    DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+    DWT->CYCCNT  = 0;
+    DWT->CTRL   |= DWT_CTRL_CYCCNTENA_Msk;
 
     OLED_Init();
+    OLED_ShowString(1, 1, "C-题 DDS方案");
 
-    // APLL初始化：1MHz采样率
-    APLL_Init(&hapll, 1000000.0f);
+    // AD9833初始化（MCLK=25MHz，根据实际晶振修改）
+    AD9833_Init(&s_dds1, 25.0f);
+    AD9833_Init(&s_dds2, 25.0f);
 
-    // TIM3驱动ADC2, TIM4驱动DAC, 都设1MHz
-    TIM_Set_Frequency(&htim3, 1000000);
-    TIM_Set_Frequency(&htim4, 1000000);
+    // DDS1：100kHz，相位0°，正弦波
+    AD9833_SetFrequency(&s_dds1, 100000.0f);
+    AD9833_SetPhase(&s_dds1, 0.0f);
+    AD9833_SetWaveform(&s_dds1, wave_sine);
 
-    // 启动ADC2 DMA CIRCULAR
-    HAL_ADC_Start_DMA(&hadc2, (uint32_t*)adc2_buf, ADC_BUF_LEN);
+    // DDS2：50kHz（2分频），正弦波
+    AD9833_SetFrequency(&s_dds2, 50000.0f);
+    AD9833_SetPhase(&s_dds2, 0.0f);
+    AD9833_SetWaveform(&s_dds2, wave_sine);
 
-    // 启动DAC1 CH1 DMA CIRCULAR
-    HAL_DAC_Start_DMA(&hdac1, DAC_CHANNEL_1,
-                      (uint32_t*)hapll.dac_buf, APLL_DAC_BUF,
-                      DAC_ALIGN_12B_R);
-
-    // 编码器：调相位/幅度，长按切换目标
+    // 编码器初始化（调相位用）
+    static ENC_Handle enc;
     ENC_Init(&enc, &htim1, KEY_GPIO_Port, KEY_Pin);
-    enc.target = ENC_CTRL_PHASE;
-    enc.phase_range = (ENC_ParamRange){10.0f, 10.0f, 30.0f, 0.0f, 350.0f};
-    enc.amp_range   = (ENC_ParamRange){0.1f, 0.1f, 0.2f, 0.0f, 2.0f};
-    enc.cur_phase = 0.0f;
-    enc.cur_amp = 1.0f;
+    enc.target    = ENC_CTRL_PHASE;
+    // 程控移相步进5°，范围0~180°，误差≤1°
+    enc.phase_range = (ENC_ParamRange){5.0f, 5.0f, 1.0f, 0.0f, 180.0f};
+    enc.cur_phase  = 0.0f;
+    enc.cur_amp   = 1.0f;
 
-    // OLED先显示，再启用APLL处理（避免回调风暴阻塞I2C）
-    OLED_ShowString(1, 1, "APLL");
-    apll_running = 1;
+    OLED_ShowString(2, 1, "DDS Ready");
+    HAL_Delay(500);
 }
 
+// ── 主循环 ────────────────────────────────────────────────────────
 void main_loop(void)
 {
-    // 编码器更新（每次循环都跑）
+    static uint32_t t = 0;
+    static float    last_phase = -1.0f;
+
+    // 编码器更新
     ENC_Event_t evt = ENC_Update(&enc);
+
+    // 旋转：更新DDS相位
     if (enc.rotated) {
         enc.rotated = 0;
-        APLL_SetPhase(&hapll, enc.cur_phase, enc.cur_amp);
-    }
-    // 短按校准：当前延迟位置=0°
-    // 长按切换：相位↔幅度
-    if (evt == ENC_EVT_CLICK) {
-        APLL_Calibrate(&hapll);
-    }
-    if (evt == ENC_EVT_LONG_PRESS) {
-        if (enc.target == ENC_CTRL_PHASE)
-            enc.target = ENC_CTRL_AMP;
-        else
-            enc.target = ENC_CTRL_PHASE;
+        s_phase = enc.cur_phase;
+        AD9833_SetPhase(&s_dds1, s_phase);
     }
 
-    // OLED 200ms刷新
-    static uint32_t t = 0;
+    // 短按：切换X轴信号源（A=直通 / B=2分频）
+    if (evt == ENC_EVT_CLICK) {
+        s_xsrc = (s_xsrc == XSRC_A) ? XSRC_B : XSRC_A;
+    }
+
+    // 长按：切换幅度（0.5 / 1.0 / 2.0 Vpp，通过外部放大/衰减实现）
+    if (evt == ENC_EVT_LONG_PRESS) {
+        s_amp = (s_amp + 1) % 3;
+        // 幅度控制通过外部运放增益实现，此处只记录状态
+    }
+
+    // OLED刷新（200ms）
     if (HAL_GetTick() - t < 200) return;
     t = HAL_GetTick();
 
-    measured_freq = APLL_GetFreq(&hapll);
-
     char buf[17];
-    sprintf(buf, "%s %.1fHz",
-            hapll.zc_found ? "LK" : "..",
-            measured_freq);
+
+    // 第1行：相位
+    sprintf(buf, "PH:%6.1f", s_phase);
     OLED_ShowString(1, 1, buf);
 
-    // 第2行：当前目标+值
-    if (enc.target == ENC_CTRL_PHASE) {
-        sprintf(buf, "PH %.0f A%.1f", hapll.target_phase_deg, enc.cur_amp);
-    } else {
-        sprintf(buf, "PH %.0f AM %.1f", hapll.target_phase_deg, enc.cur_amp);
-    }
+    // 第2行：X轴源 + 幅度
+    const char *xsrc_str = (s_xsrc == XSRC_A) ? "X:A(直通)" : "X:B(50k)";
+    const char *amp_str  = (s_amp == 0) ? "0.5V" : (s_amp == 1) ? "1.0V" : "2.0V";
+    sprintf(buf, "%s %s", xsrc_str, amp_str);
     OLED_ShowString(2, 1, buf);
-}
 
-// ---- ADC2 DMA回调 ----
-
-void HAL_ADC_ConvHalfCpltCallback(ADC_HandleTypeDef *hadc)
-{
-    if (hadc->Instance != ADC2 || !apll_running) return;
-
-    uint16_t half = ADC_BUF_LEN / 2;
-
-    // DCache invalidation: DMA写了前半帧，CPU要读到真实数据
-    SCB_InvalidateDCache_by_Addr((uint32_t*)adc2_buf, half * sizeof(uint16_t));
-
-#if BYPASS_TEST
-    // 直通：ADC数据直接复制到DAC，跳过APLL
-    for (uint16_t i = 0; i < half; i++) {
-        hapll.dac_buf[i] = adc2_buf[i];
-    }
-#else
-    // 处理前半帧 → 填DAC前半帧
-    APLL_Process(&hapll, adc2_buf, 0, half);
-#endif
-
-    // DCache清理: 让DMA把DAC数据搬走
-    SCB_CleanDCache_by_Addr((uint32_t*)hapll.dac_buf, APLL_DAC_BUF * sizeof(uint16_t));
-}
-
-void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
-{
-    if (hadc->Instance != ADC2 || !apll_running) return;
-
-    uint16_t half = ADC_BUF_LEN / 2;
-
-    // DCache invalidation: DMA写了后半帧，CPU要读到真实数据
-    SCB_InvalidateDCache_by_Addr((uint32_t*)(adc2_buf + half), half * sizeof(uint16_t));
-
-#if BYPASS_TEST
-    // 直通：ADC数据直接复制到DAC，跳过APLL
-    for (uint16_t i = 0; i < half; i++) {
-        hapll.dac_buf[half + i] = adc2_buf[half + i];
-    }
-#else
-    // 处理后半帧 → 填DAC后半帧
-    APLL_Process(&hapll, adc2_buf + half, half, half);
-#endif
-
-    // DCache清理: 让DMA把DAC数据搬走
-    SCB_CleanDCache_by_Addr((uint32_t*)hapll.dac_buf, APLL_DAC_BUF * sizeof(uint16_t));
+    // 第3行：DDS状态
+    sprintf(buf, "D1:%dkHz", (int)(100000.0f / 1000.0f));
+    OLED_ShowString(3, 1, buf);
+    sprintf(buf, "D2:%dkHz", (int)(50000.0f / 1000.0f));
+    OLED_ShowString(3, 9, buf);
 }
