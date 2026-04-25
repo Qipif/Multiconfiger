@@ -32,8 +32,8 @@ static void oled_refresh(void)
         snprintf(buf, sizeof(buf), "P:%.1f deg", g_phaseView);
         OLED_ShowString(2, 1, buf);
 
-        snprintf(buf, sizeof(buf), "C:%lu P:%.1f",
-                 g_pllLoopCnt, g_phaseView);
+        snprintf(buf, sizeof(buf), "L:%lu CB:%lu",
+                 g_pllLoopCnt, g_cbCnt);
         OLED_ShowString(3, 1, buf);
     } else {
         snprintf(buf, sizeof(buf), "Vin:%d~%d",

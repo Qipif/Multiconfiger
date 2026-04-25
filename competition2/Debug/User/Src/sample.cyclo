@@ -1,6 +1,5 @@
-../User/Src/sample.c:46:17:findPeak	3
-../User/Src/sample.c:57:6:HAL_ADC_ConvCpltCallback	2
-../User/Src/sample.c:64:6:HAL_ADC_ConvHalfCpltCallback	1
-../User/Src/sample.c:70:14:fftGetPhase	4
-../User/Src/sample.c:92:6:DPLL_Init	1
-../User/Src/sample.c:111:6:DPLL_Loop	16
+../User/Src/sample.c:54:6:HAL_ADC_ConvCpltCallback	2
+../User/Src/sample.c:61:6:HAL_ADC_ConvHalfCpltCallback	1
+../User/Src/sample.c:64:20:iq_mix	1
+../User/Src/sample.c:76:6:DPLL_Init	2
+../User/Src/sample.c:99:6:DPLL_Loop	18

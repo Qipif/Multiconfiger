@@ -8,8 +8,6 @@
 #define __SAMPLE_H
 
 #include "stm32h7xx_hal.h"
-#include "arm_math.h"
-#include "pid.h"
 
 #define PLL_FFT_NUM      256        // FFT点数 = 单次采样点数
 #define PLL_SAMPLE_RATE  256000.0f  // 采样率 256kHz
@@ -26,6 +24,7 @@ extern float    g_debugVinMin;
 extern float    g_debugVoutMax;
 extern float    g_debugVoutMin;
 extern uint32_t g_pllLoopCnt;    // PLL循环计数
+extern uint32_t g_cbCnt;         // DMA回调次数
 
 // ── 函数声明 ────────────────────────────────────
 void DPLL_Init(void);
