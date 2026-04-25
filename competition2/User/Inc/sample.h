@@ -25,6 +25,7 @@ extern float    g_debugVinMax;
 extern float    g_debugVinMin;
 extern float    g_debugVoutMax;
 extern float    g_debugVoutMin;
+extern uint32_t g_pllLoopCnt;    // PLL循环计数
 
 // ── 函数声明 ────────────────────────────────────
 void DPLL_Init(void);

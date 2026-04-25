@@ -32,11 +32,9 @@ static void oled_refresh(void)
         snprintf(buf, sizeof(buf), "P:%.1f deg", g_phaseView);
         OLED_ShowString(2, 1, buf);
 
-        if (fabsf(g_phaseView) < 5.0f) {
-            OLED_ShowString(3, 1, "LOCK  [OK]");
-        } else {
-            OLED_ShowString(3, 1, "TRACK    ");
-        }
+        snprintf(buf, sizeof(buf), "C:%lu P:%.1f",
+                 g_pllLoopCnt, g_phaseView);
+        OLED_ShowString(3, 1, buf);
     } else {
         snprintf(buf, sizeof(buf), "Vin:%d~%d",
                  (int)g_debugVinMin, (int)g_debugVinMax);
@@ -57,7 +55,14 @@ static void oled_refresh(void)
 
 void check_button(void)
 {
-    // 预留：PA0按键切换页面
+    // PA0按键切换OLED页面（0=主页面, 1=调试页面）
+    if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_0) == GPIO_PIN_RESET) {
+        HAL_Delay(50);
+        if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_0) == GPIO_PIN_RESET) {
+            s_oledPage = !s_oledPage;
+            while (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_0) == GPIO_PIN_RESET);
+        }
+    }
 }
 
 // ── 初始化 ──────────────────────────────────────────
