@@ -1,2 +1,4 @@
-../User/Src/mainoop.c:36:6:main_init	1
-../User/Src/mainoop.c:64:6:main_loop	11
+../User/Src/mainoop.c:53:6:main_init	1
+../User/Src/mainoop.c:80:16:encoder_get_delta	2
+../User/Src/mainoop.c:99:16:consume_btn	3
+../User/Src/mainoop.c:114:6:main_loop	40

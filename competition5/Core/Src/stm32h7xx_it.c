@@ -23,7 +23,6 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "edgesync.h"
-#include "encoder.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -206,7 +205,7 @@ void SysTick_Handler(void)
 
 /**
   * @brief This function handles EXTI line0 interrupt.
-  *        PA0按键 → 只记时间戳+设flag，主循环消费
+  *        PA0模式切换按键 → 只记时间戳+设flag
   */
 void EXTI0_IRQHandler(void)
 {
@@ -214,9 +213,15 @@ void EXTI0_IRQHandler(void)
   if (__HAL_GPIO_EXTI_GET_IT(KEY_Pin) != RESET)
   {
     __HAL_GPIO_EXTI_CLEAR_IT(KEY_Pin);
-    enc_key_timestamp = HAL_GetTick();
-    enc_key_pressed = 1;
-    return;  // 不走HAL回调，直接返回
+    extern volatile uint8_t  btn_mode_pressed;
+    extern volatile uint32_t btn_mode_timestamp;
+    uint32_t now = HAL_GetTick();
+    // ISR端消抖：30ms内重复触发直接丢弃
+    if (now - btn_mode_timestamp >= 30) {
+      btn_mode_timestamp = now;
+      btn_mode_pressed = 1;
+    }
+    return;
   }
   /* USER CODE END EXTI0_IRQn 0 */
   HAL_GPIO_EXTI_IRQHandler(KEY_Pin);
@@ -338,6 +343,26 @@ void TIM1_CC_IRQHandler(void)
 }
 
 /* USER CODE BEGIN 1 */
+
+/**
+  * @brief This function handles EXTI line2 interrupt.
+  *        PB2确认按键 → 只记时间戳+设flag
+  */
+void EXTI2_IRQHandler(void)
+{
+  if (__HAL_GPIO_EXTI_GET_IT(BTN_OK_Pin) != RESET)
+  {
+    __HAL_GPIO_EXTI_CLEAR_IT(BTN_OK_Pin);
+    extern volatile uint8_t  btn_ok_pressed;
+    extern volatile uint32_t btn_ok_timestamp;
+    uint32_t now = HAL_GetTick();
+    // ISR端消抖：30ms内重复触发直接丢弃
+    if (now - btn_ok_timestamp >= 30) {
+      btn_ok_timestamp = now;
+      btn_ok_pressed = 1;
+    }
+  }
+}
 
 /**
   * @brief This function handles EXTI line[9:5] interrupts.

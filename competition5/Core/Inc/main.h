@@ -71,6 +71,11 @@ void Error_Handler(void);
 
 /* USER CODE BEGIN Private defines */
 
+// PB2 确认按键
+#define BTN_OK_Pin       GPIO_PIN_2
+#define BTN_OK_GPIO_Port GPIOB
+#define BTN_OK_EXTI_IRQn EXTI2_IRQn
+
 /* USER CODE END Private defines */
 
 #ifdef __cplusplus

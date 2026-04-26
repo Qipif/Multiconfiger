@@ -239,7 +239,7 @@ static void EdgeSync_CalcDelay(void)
 void EdgeSync_SetPhase(float deg)
 {
     if (deg < 0.0f) deg = 0.0f;
-    if (deg > 355.0f) deg = 355.0f;
+    if (deg > 180.0f) deg = 180.0f;
     hsync.target_phase_deg = deg;
     EdgeSync_CalcDelay();
 }
@@ -282,6 +282,7 @@ void EdgeSync_UpdateFreq(void)
     static uint32_t last_dwt = 0;
     static uint32_t last_cnt = 0;
     static uint32_t last_tick = 0;
+    static uint8_t  init_lock = 0;  // 0=未锁定, 1=已锁定
 
     uint32_t now_tick = HAL_GetTick();
     if (now_tick - last_tick < 100) return;
@@ -293,14 +294,22 @@ void EdgeSync_UpdateFreq(void)
     uint32_t dt = now_dwt - last_dwt;
 
     if (dcnt >= 2 && dt > 0) {
-        // v4: cnt只计上升沿（不再是双边沿），所以不需要*0.5
         float cpu_freq = (float)SystemCoreClock;
         float freq_raw = (float)dcnt * cpu_freq / (float)dt;
 
-        if (hsync.freq_filt <= 0.0f)
+        if (hsync.freq_filt <= 0.0f) {
+            // 首次测量：直接跳到实测值
             hsync.freq_filt = freq_raw;
-        else
-            hsync.freq_filt = hsync.freq_filt * 0.95f + freq_raw * 0.05f;
+        } else {
+            // 双alpha：未锁定时快收敛(0.3)，锁定后稳态(0.05)
+            float alpha = init_lock ? 0.05f : 0.3f;
+            hsync.freq_filt = hsync.freq_filt * (1.0f - alpha) + freq_raw * alpha;
+
+            // 频率偏差<0.5%认为锁定
+            float err = (freq_raw - hsync.freq_filt) / hsync.freq_filt;
+            if (err < 0) err = -err;
+            if (err < 0.005f) init_lock = 1;
+        }
 
         EdgeSync_CalcDelay();
     }

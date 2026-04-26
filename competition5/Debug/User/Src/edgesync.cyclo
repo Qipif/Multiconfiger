@@ -10,4 +10,4 @@ C:/Users/qipif/Desktop/StmProject/Multiconfiger/competition5/Drivers/CMSIS/Inclu
 ../User/Src/edgesync.c:261:6:EdgeSync_SetAmp	3
 ../User/Src/edgesync.c:269:7:EdgeSync_GetAmp	1
 ../User/Src/edgesync.c:274:7:EdgeSync_GetFreq	1
-../User/Src/edgesync.c:280:6:EdgeSync_UpdateFreq	5
+../User/Src/edgesync.c:280:6:EdgeSync_UpdateFreq	8

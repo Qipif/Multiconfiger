@@ -28,7 +28,7 @@ typedef struct {
     float    freq_filt;        // 低通滤波后频率
 
     // 移相
-    float    target_phase_deg; // 目标相位 0-355°，5°步进（显示值）
+    float    target_phase_deg; // 目标相位 0-180°（显示值）
     float    phase_offset;     // 校准偏移：示波器180°时记下的显示值
                                // 实际相位 = target_phase_deg - phase_offset
     uint32_t delay_cycles;     // 延时（TIM2周期数），ISR直接用
