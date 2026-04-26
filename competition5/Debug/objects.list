@@ -630,3 +630,4 @@
 "./User/Src/font.o"
 "./User/Src/mainoop.o"
 "./User/Src/oled.o"
+"./User/Src/store.o"

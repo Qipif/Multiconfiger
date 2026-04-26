@@ -10,7 +10,8 @@ C_SRCS += \
 ../User/Src/encoder.c \
 ../User/Src/font.c \
 ../User/Src/mainoop.c \
-../User/Src/oled.c 
+../User/Src/oled.c \
+../User/Src/store.c 
 
 OBJS += \
 ./User/Src/ad9833.o \
@@ -18,7 +19,8 @@ OBJS += \
 ./User/Src/encoder.o \
 ./User/Src/font.o \
 ./User/Src/mainoop.o \
-./User/Src/oled.o 
+./User/Src/oled.o \
+./User/Src/store.o 
 
 C_DEPS += \
 ./User/Src/ad9833.d \
@@ -26,7 +28,8 @@ C_DEPS += \
 ./User/Src/encoder.d \
 ./User/Src/font.d \
 ./User/Src/mainoop.d \
-./User/Src/oled.d 
+./User/Src/oled.d \
+./User/Src/store.d 
 
 
 # Each subdirectory must supply rules for building sources it contributes
@@ -36,7 +39,7 @@ User/Src/%.o User/Src/%.su User/Src/%.cyclo: ../User/Src/%.c User/Src/subdir.mk
 clean: clean-User-2f-Src
 
 clean-User-2f-Src:
-	-$(RM) ./User/Src/ad9833.cyclo ./User/Src/ad9833.d ./User/Src/ad9833.o ./User/Src/ad9833.su ./User/Src/edgesync.cyclo ./User/Src/edgesync.d ./User/Src/edgesync.o ./User/Src/edgesync.su ./User/Src/encoder.cyclo ./User/Src/encoder.d ./User/Src/encoder.o ./User/Src/encoder.su ./User/Src/font.cyclo ./User/Src/font.d ./User/Src/font.o ./User/Src/font.su ./User/Src/mainoop.cyclo ./User/Src/mainoop.d ./User/Src/mainoop.o ./User/Src/mainoop.su ./User/Src/oled.cyclo ./User/Src/oled.d ./User/Src/oled.o ./User/Src/oled.su
+	-$(RM) ./User/Src/ad9833.cyclo ./User/Src/ad9833.d ./User/Src/ad9833.o ./User/Src/ad9833.su ./User/Src/edgesync.cyclo ./User/Src/edgesync.d ./User/Src/edgesync.o ./User/Src/edgesync.su ./User/Src/encoder.cyclo ./User/Src/encoder.d ./User/Src/encoder.o ./User/Src/encoder.su ./User/Src/font.cyclo ./User/Src/font.d ./User/Src/font.o ./User/Src/font.su ./User/Src/mainoop.cyclo ./User/Src/mainoop.d ./User/Src/mainoop.o ./User/Src/mainoop.su ./User/Src/oled.cyclo ./User/Src/oled.d ./User/Src/oled.o ./User/Src/oled.su ./User/Src/store.cyclo ./User/Src/store.d ./User/Src/store.o ./User/Src/store.su
 
 .PHONY: clean-User-2f-Src
 

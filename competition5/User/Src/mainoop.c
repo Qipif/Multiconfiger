@@ -2,21 +2,22 @@
  * competition5 - 程控移相器 UI
  *
  * 四个模式，右上角显示模式号：
- *   模式0：校准界面 - 旋转编码器移相，按确认键校准为180°
+ *   模式0：校准界面 - 旋转编码器移相，按确认键校准为180°，校准值存Flash
  *   模式1：移相界面 - 旋转编码器移相(2°步进，0~180°)，确认键无效
  *   模式2：相位设置 - 旋转编码器改预设值(1°步进)，按确认键写入
- *   模式3：自动循环 - 旋转编码器改周期(0.5s步进)，确认键无效
+ *   模式3：自动循环 - 旋转编码器改周期(0.5s步进)，确认键存Flash
+ *
+ * Flash存储：只存 phase_offset(校准偏移) 和 auto_time(自动循环周期)
  *
  * 按键：
  *   PA0 = 模式切换（EXTI0中断驱动）
  *   PB2 = 确认按键（EXTI2中断驱动）
- *
- * 参考08_multiconfiger8的架构：状态机+OLED分时刷新
  */
 
 #include "main.h"
 #include "oled.h"
 #include "edgesync.h"
+#include "store.h"
 #include <stdio.h>
 
 // ── 模式 ──
@@ -34,7 +35,7 @@ volatile uint32_t btn_mode_timestamp = 0;
 volatile uint8_t  btn_ok_pressed = 0;      // PB2 确认
 volatile uint32_t btn_ok_timestamp = 0;
 
-#define BTN_DEBOUNCE_MS  50  // 消抖时间（ISR端30ms+主循环端50ms双保险）
+#define BTN_DEBOUNCE_MS  50  // 消抖时间
 
 // ── 状态 ──
 static AppMode cur_mode = MODE_CALIBRATE;
@@ -42,12 +43,19 @@ static AppMode cur_mode = MODE_CALIBRATE;
 // 各模式参数
 static float phase_val  = 0.0f;   // 当前相位（模式0/1用）
 static float set_val    = 0.0f;   // 预设值（模式2用）
-static float auto_time  = 15.0f;  // 自动循环周期（模式3用）
+static float auto_time  = 5.0f;   // 自动循环周期（模式3用，默认5s）
+
+// Flash读出的校准偏移
+static float saved_phase_offset = 0.0f;
 
 // 自动循环状态
 static uint8_t auto_running = 0;
 static float    auto_phase  = 0.0f;
 static uint32_t auto_last_tick = 0;
+
+// 校准冷却
+static uint32_t calib_last = 0;
+#define CALIB_COOLDOWN_MS 500
 
 // ── 初始化 ──
 void main_init(void)
@@ -59,8 +67,17 @@ void main_init(void)
 
     OLED_Init();
 
+    // 加载Flash配置
+    CFG_Init();
+    CFG_GetActive(&saved_phase_offset, &auto_time);
+
     EdgeSync_Init();
     EdgeSync_SetAmp(2.7f);
+
+    // 恢复校准偏移
+    if (saved_phase_offset != 0.0f) {
+        EdgeSync_Calibrate(saved_phase_offset);
+    }
 
     // 停掉不需要的定时器
     HAL_TIM_Base_Stop(&htim3);
@@ -76,7 +93,7 @@ void main_init(void)
     OLED_ShowString(3, 1, "              ");
 }
 
-// ── 编码器旋转检测（简化版，直接读delta） ──
+// ── 编码器旋转检测 ──
 static int16_t encoder_get_delta(void)
 {
     static int16_t last_cnt = 0;
@@ -136,7 +153,7 @@ void main_loop(void)
             break;
 
         case MODE_AUTO:
-            // 0.5s步进
+            // 0.5s步进，1.0~60.0s
             auto_time += delta * 0.5f;
             if (auto_time < 1.0f)  auto_time = 1.0f;
             if (auto_time > 60.0f) auto_time = 60.0f;
@@ -179,15 +196,18 @@ void main_loop(void)
     if (consume_btn(&btn_ok_pressed, &btn_ok_last)) {
         switch (cur_mode) {
         case MODE_CALIBRATE:
-            // 校准：当前相位记为180°（加冷却期防双击）
+            // 校准：当前相位记为180° + 存Flash
             {
-                static uint32_t calib_last = 0;
                 uint32_t calib_now = HAL_GetTick();
-                if (calib_now - calib_last >= 500) {
+                if (calib_now - calib_last >= CALIB_COOLDOWN_MS) {
                     calib_last = calib_now;
+                    // 校准：记当前显示值为180°偏移
                     EdgeSync_Calibrate(phase_val);
+                    saved_phase_offset = phase_val;
                     phase_val = 180.0f;
                     EdgeSync_SetPhase(180.0f);
+                    // 存Flash：校准偏移 + 当前周期值
+                    CFG_Save(saved_phase_offset, auto_time);
                 }
             }
             break;
@@ -197,13 +217,14 @@ void main_loop(void)
             break;
 
         case MODE_SET:
-            // 写入预设值到相位
+            // 写入预设值到相位（不存Flash）
             EdgeSync_SetPhase(set_val);
             phase_val = set_val;
             break;
 
         case MODE_AUTO:
-            // 确认键无效
+            // 存Flash：当前校准偏移 + 周期值
+            CFG_Save(saved_phase_offset, auto_time);
             break;
 
         default: break;
@@ -215,8 +236,6 @@ void main_loop(void)
 
     // ── 自动循环相位 ──
     if (cur_mode == MODE_AUTO && auto_running) {
-        // 计算相位增量：0→180°需要 auto_time 秒
-        // 每ms增加 180.0 / (auto_time * 1000) 度
         float phase_step = 180.0f / (auto_time * 1000.0f);
         uint32_t dt = now - auto_last_tick;
         auto_last_tick = now;
@@ -268,7 +287,7 @@ void main_loop(void)
     // 第3行：模式提示
     switch (cur_mode) {
     case MODE_CALIBRATE:
-        sprintf(buf, "OK=calib 180  ");
+        sprintf(buf, "OK=calib+save ");
         break;
     case MODE_PHASE:
         sprintf(buf, "Step:2  0~180 ");
@@ -277,9 +296,8 @@ void main_loop(void)
         sprintf(buf, "OK=write Set  ");
         break;
     case MODE_AUTO:
-        sprintf(buf, "Auto %s T=%.1f ",
-                auto_running ? "ON " : "OFF",
-                auto_time);
+        sprintf(buf, "Auto %s OK=save",
+                auto_running ? "ON " : "OFF");
         break;
     default:
         sprintf(buf, "               ");
