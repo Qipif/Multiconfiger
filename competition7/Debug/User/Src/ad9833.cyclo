@@ -1,0 +1,10 @@
+../User/Src/ad9833.c:9:6:AD9833_Select	1
+../User/Src/ad9833.c:14:6:AD9833_Unselect	1
+../User/Src/ad9833.c:19:6:AD9833_WriteRegister	1
+../User/Src/ad9833.c:29:6:AD9833_WriteCfgReg	4
+../User/Src/ad9833.c:41:6:AD9833_SetWaveform	4
+../User/Src/ad9833.c:49:6:AD9833_SetFrequency	3
+../User/Src/ad9833.c:65:6:AD9833_SetPhase	2
+../User/Src/ad9833.c:73:6:AD9833_Init	1
+../User/Src/ad9833.c:90:6:AD9833_SleepMode	1
+../User/Src/ad9833.c:96:6:AD9833_OutputEnable	1

@@ -1,0 +1,4 @@
+../User/Src/mainoop.c:38:6:main_init	1
+../User/Src/mainoop.c:69:6:main_loop	11
+../User/Src/mainoop.c:90:6:HAL_ADC_ConvHalfCpltCallback	2
+../User/Src/mainoop.c:97:6:HAL_ADC_ConvCpltCallback	2

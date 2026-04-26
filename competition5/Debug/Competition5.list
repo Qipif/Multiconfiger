@@ -35,13 +35,13 @@ Idx Name          Size      VMA       LMA       File off  Algn
                   CONTENTS, READONLY, DEBUGGING, OCTETS
  15 .debug_line   000278ef  00000000  00000000  000773a0  2**0
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 16 .debug_str    0017b4d7  00000000  00000000  0009ec8f  2**0
+ 16 .debug_str    0017b494  00000000  00000000  0009ec8f  2**0
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 17 .comment      00000043  00000000  00000000  0021a166  2**0
+ 17 .comment      00000043  00000000  00000000  0021a123  2**0
                   CONTENTS, READONLY
- 18 .debug_frame  0000815c  00000000  00000000  0021a1ac  2**2
+ 18 .debug_frame  0000815c  00000000  00000000  0021a168  2**2
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 19 .debug_line_str 0000006b  00000000  00000000  00222308  2**0
+ 19 .debug_line_str 0000006b  00000000  00000000  002222c4  2**0
                   CONTENTS, READONLY, DEBUGGING, OCTETS
 
 Disassembly of section .text:
@@ -27757,10 +27757,10 @@ void EdgeSync_Calibrate(float current_display_phase)
  800aee2:	b082      	sub	sp, #8
  800aee4:	af00      	add	r7, sp, #0
  800aee6:	ed87 0a01 	vstr	s0, [r7, #4]
-    hsync.phase_offset = current_display_phase - 180.0f;
- 800aeea:	edd7 7a01 	vldr	s15, [r7, #4]
- 800aeee:	ed9f 7a06 	vldr	s14, [pc, #24]	@ 800af08 <EdgeSync_Calibrate+0x28>
- 800aef2:	ee77 7ac7 	vsub.f32	s15, s15, s14
+    hsync.phase_offset = 180.0f - current_display_phase;
+ 800aeea:	ed9f 7a07 	vldr	s14, [pc, #28]	@ 800af08 <EdgeSync_Calibrate+0x28>
+ 800aeee:	edd7 7a01 	vldr	s15, [r7, #4]
+ 800aef2:	ee77 7a67 	vsub.f32	s15, s14, s15
  800aef6:	4b05      	ldr	r3, [pc, #20]	@ (800af0c <EdgeSync_Calibrate+0x2c>)
  800aef8:	edc3 7a03 	vstr	s15, [r3, #12]
     EdgeSync_CalcDelay();

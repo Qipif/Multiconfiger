@@ -247,7 +247,7 @@ void EdgeSync_SetPhase(float deg)
 // ---- 校准：当前示波器显示180°，记下显示值作为偏移 ----
 void EdgeSync_Calibrate(float current_display_phase)
 {
-    hsync.phase_offset = current_display_phase - 180.0f;
+    hsync.phase_offset = 180.0f - current_display_phase;
     EdgeSync_CalcDelay();
 }
 
