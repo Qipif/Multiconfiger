@@ -1,0 +1,4 @@
+../User/Src/encoder.c:8:6:ENCODER_Init	1
+../User/Src/encoder.c:17:9:ENCODER_GetDelta	3
+../User/Src/encoder.c:31:9:ENCODER_GetCount	1
+../User/Src/encoder.c:35:6:ENCODER_SetCount	1
