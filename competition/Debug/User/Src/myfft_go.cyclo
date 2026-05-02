@@ -1,6 +1,0 @@
-../User/Src/myfft_go.c:20:13:Goertzel_Init	1
-../User/Src/myfft_go.c:29:13:Goertzel_Process	2
-../User/Src/myfft_go.c:37:13:Goertzel_GetResult	1
-../User/Src/myfft_go.c:45:13:_deinterleave	3
-../User/Src/myfft_go.c:65:6:GOERTZEL_SetFreqBin	1
-../User/Src/myfft_go.c:73:6:GOERTZEL_ProcessPhase	3

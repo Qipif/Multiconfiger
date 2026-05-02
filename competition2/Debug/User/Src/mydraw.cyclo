@@ -1,8 +1,0 @@
-../User/Src/mydraw.c:7:6:MYDRAW_Init	1
-../User/Src/mydraw.c:12:6:MYDRAW_SetMode	1
-../User/Src/mydraw.c:17:10:MYDRAW_GetMode	1
-../User/Src/mydraw.c:21:6:MYDRAW_NextMode	1
-../User/Src/mydraw.c:26:6:MYDRAW_DrawWaveOverlay	2
-../User/Src/mydraw.c:38:6:MYDRAW_DrawLissajous	8
-../User/Src/mydraw.c:64:6:MYDRAW_DrawFFTInfo	8
-../User/Src/mydraw.c:105:6:MYDRAW_DrawSpectrum	6

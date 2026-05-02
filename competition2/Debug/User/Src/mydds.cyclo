@@ -1,7 +1,0 @@
-../User/Src/mydds.c:54:17:_get_timer_clk	6
-../User/Src/mydds.c:70:13:_dds_update	19
-../User/Src/mydds.c:159:6:MYDDS_Init	1
-../User/Src/mydds.c:177:6:MYDDS_SetWaveform	1
-../User/Src/mydds.c:192:6:MYDDS_UpdateParams	2
-../User/Src/mydds.c:208:6:MYDDS_Start	1
-../User/Src/mydds.c:213:6:MYDDS_Stop	1
