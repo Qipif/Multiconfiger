@@ -1,6 +1,0 @@
-../User/Src/store.c:16:17:_crc32	3
-../User/Src/store.c:27:16:_write_flash	4
-../User/Src/store.c:65:6:CFG_Init	3
-../User/Src/store.c:81:6:CFG_Save	1
-../User/Src/store.c:90:6:CFG_GetActive	4
-../User/Src/store.c:96:6:CFG_Format	1

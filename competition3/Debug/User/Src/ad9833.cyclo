@@ -1,5 +1,0 @@
-../User/Src/ad9833.c:42:13:AD9833_WriteWord	3
-../User/Src/ad9833.c:63:6:AD9833_Init	1
-../User/Src/ad9833.c:86:6:AD9833_SetFrequency	3
-../User/Src/ad9833.c:106:6:AD9833_SetPhase	4
-../User/Src/ad9833.c:122:6:AD9833_SetWaveform	5

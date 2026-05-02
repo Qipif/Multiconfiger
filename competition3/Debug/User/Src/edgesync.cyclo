@@ -1,7 +1,0 @@
-../User/Src/edgesync.c:22:6:EdgeSync_OnEdge	6
-../User/Src/edgesync.c:55:6:EdgeSync_TIM2_CC_Handler	3
-../User/Src/edgesync.c:69:6:EdgeSync_Init	2
-../User/Src/edgesync.c:120:13:EdgeSync_CalcDelay	3
-../User/Src/edgesync.c:144:6:EdgeSync_SetPhase	3
-../User/Src/edgesync.c:152:7:EdgeSync_GetFreq	1
-../User/Src/edgesync.c:158:6:EdgeSync_UpdateFreq	5
