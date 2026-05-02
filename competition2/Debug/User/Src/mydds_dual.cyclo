@@ -1,8 +1,0 @@
-../User/Src/mydds_dual.c:43:17:_get_timer_clk	6
-../User/Src/mydds_dual.c:58:17:_calc_sample	8
-../User/Src/mydds_dual.c:93:13:_dual_dds_update	20
-../User/Src/mydds_dual.c:161:6:MYDDS_DualInit	1
-../User/Src/mydds_dual.c:176:6:MYDDS_DualSetWaveform	1
-../User/Src/mydds_dual.c:192:6:MYDDS_DualUpdateParams	3
-../User/Src/mydds_dual.c:206:6:MYDDS_DualStart	1
-../User/Src/mydds_dual.c:210:6:MYDDS_DualStop	1
